@@ -4,8 +4,7 @@ use super::*;
 #[cfg(feature = "serialize")]
 use crate::serde_impls::{SerializeWithData, SerializeWithResolver};
 use crate::{
-    RawSyntaxKind,
-    Syntax,
+    RawSyntaxKind, Syntax,
     green::{GreenElementRef, GreenNode},
     interning::{Resolver, TokenKey},
     text::*,
@@ -43,7 +42,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// Otherwise, only this node's kind and range are written.
     pub fn write_debug<R>(&self, resolver: &R, target: &mut impl fmt::Write, recursive: bool) -> fmt::Result
     where
-        R: Resolver<TokenKey> + ?Sized,
+        R: Resolver<TokenKey, S::Data> + ?Sized,
     {
         if recursive {
             let mut level = 0;
@@ -75,7 +74,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     #[inline]
     pub fn debug<R>(&self, resolver: &R, recursive: bool) -> String
     where
-        R: Resolver<TokenKey> + ?Sized,
+        R: Resolver<TokenKey, S::Data> + ?Sized,
     {
         // NOTE: `fmt::Write` methods on `String` never fail
         let mut res = String::new();
@@ -86,7 +85,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// Writes this node's [`Display`](fmt::Display) representation into the given `target`.
     pub fn write_display<R>(&self, resolver: &R, target: &mut impl fmt::Write) -> fmt::Result
     where
-        R: Resolver<TokenKey> + ?Sized,
+        R: Resolver<TokenKey, S::Data> + ?Sized,
     {
         self.preorder_with_tokens()
             .filter_map(|event| match event {
@@ -102,7 +101,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     #[inline]
     pub fn display<R>(&self, resolver: &R) -> String
     where
-        R: Resolver<TokenKey> + ?Sized,
+        R: Resolver<TokenKey, S::Data> + ?Sized,
     {
         // NOTE: `fmt::Write` methods on `String` never fail
         let mut res = String::new();
@@ -111,7 +110,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     }
 
     /// If there is a resolver associated with this tree, returns it.
-    pub fn resolver(&self) -> Option<&AllocArc<dyn Resolver<TokenKey>>> {
+    pub fn resolver(&self) -> Option<&AllocArc<dyn Resolver<TokenKey, S::Data>>> {
         match &self.root().data().kind {
             Kind::Root(_, resolver) => resolver.as_ref(),
             _ => unreachable!(),
@@ -238,10 +237,10 @@ impl<S: Syntax, D> Hash for SyntaxNode<S, D> {
 }
 
 enum Kind<S: Syntax, D: 'static> {
-    Root(GreenNode, Option<AllocArc<dyn Resolver<TokenKey>>>),
+    Root(GreenNode, Option<AllocArc<dyn Resolver<TokenKey, S::Data>>>),
     Child {
         parent: SyntaxNode<S, D>,
-        index:  u32,
+        index: u32,
         offset: TextSize,
     },
 }
@@ -256,11 +255,11 @@ impl<S: Syntax, D> Kind<S, D> {
 }
 
 pub(super) struct NodeData<S: Syntax, D: 'static> {
-    kind:        Kind<S, D>,
-    green:       NonNull<GreenNode>,
-    ref_count:   *mut AtomicU32,
-    data:        RwLock<Option<Arc<D>>>,
-    children:    Vec<UnsafeCell<Option<SyntaxElement<S, D>>>>,
+    kind: Kind<S, D>,
+    green: NonNull<GreenNode>,
+    ref_count: *mut AtomicU32,
+    data: RwLock<Option<Arc<D>>>,
+    children: Vec<UnsafeCell<Option<SyntaxElement<S, D>>>>,
     child_locks: Vec<RwLock<()>>,
 }
 
@@ -305,7 +304,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
         Self { data }
     }
 
-    fn make_new_root(green: GreenNode, resolver: Option<AllocArc<dyn Resolver<TokenKey>>>) -> Self {
+    fn make_new_root(green: GreenNode, resolver: Option<AllocArc<dyn Resolver<TokenKey, S::Data>>>) -> Self {
         let ref_count = Box::new(AtomicU32::new(1));
         let n_children = green.children().count();
         let data = NodeData::new(
@@ -349,8 +348,11 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// assert_eq!(root.text(), "content");
     /// ```
     #[inline]
-    pub fn new_root_with_resolver(green: GreenNode, resolver: impl Resolver<TokenKey> + 'static) -> ResolvedNode<S, D> {
-        let ptr: AllocArc<dyn Resolver<TokenKey>> = AllocArc::new(resolver);
+    pub fn new_root_with_resolver(
+        green: GreenNode,
+        resolver: impl Resolver<TokenKey, S::Data> + 'static,
+    ) -> ResolvedNode<S, D> {
+        let ptr: AllocArc<dyn Resolver<TokenKey, S::Data>> = AllocArc::new(resolver);
         ResolvedNode {
             syntax: SyntaxNode::make_new_root(green, Some(ptr)),
         }
@@ -547,9 +549,20 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// by this node, i.e. the combined text of all token leafs of the subtree originating in this
     /// node.
     #[inline]
+    pub fn resolve_data<'n, 'i, I>(&'n self, resolver: &'i I) -> SyntaxData<'n, 'i, I, S, D>
+    where
+        I: Resolver<TokenKey, S::Data> + ?Sized,
+    {
+        SyntaxData::new(self, resolver)
+    }
+
+    /// Uses the provided resolver to return an efficient representation of all source text covered
+    /// by this node.
+    #[inline]
     pub fn resolve_text<'n, 'i, I>(&'n self, resolver: &'i I) -> SyntaxText<'n, 'i, I, S, D>
     where
-        I: Resolver<TokenKey> + ?Sized,
+        S: Syntax<Data = str>,
+        I: Resolver<TokenKey, str> + ?Sized,
     {
         SyntaxText::new(self, resolver)
     }
@@ -915,7 +928,7 @@ where
     /// including the data and by using an external resolver.
     pub fn as_serialize_with_data_with_resolver<'node>(
         &'node self,
-        resolver: &'node impl Resolver<TokenKey>,
+        resolver: &'node impl Resolver<TokenKey, S::Data>,
     ) -> impl serde::Serialize + 'node
     where
         D: serde::Serialize,
@@ -927,7 +940,7 @@ where
     /// which uses the given resolver instead of the resolver inside the tree.
     pub fn as_serialize_with_resolver<'node>(
         &'node self,
-        resolver: &'node impl Resolver<TokenKey>,
+        resolver: &'node impl Resolver<TokenKey, S::Data>,
     ) -> impl serde::Serialize + 'node {
         SerializeWithResolver { node: self, resolver }
     }

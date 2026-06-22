@@ -1,8 +1,11 @@
 extern crate alloc;
 
-use core::hash::{Hash, Hasher};
+use core::{
+    borrow::Borrow,
+    hash::{Hash, Hasher},
+};
 
-use alloc::vec::Vec;
+use alloc::{borrow::ToOwned, vec::Vec};
 use hashbrown::HashMap;
 use rustc_hash::{FxBuildHasher, FxHasher};
 
@@ -10,10 +13,9 @@ type FxHashMap<K, V> = HashMap<K, V, FxBuildHasher>;
 use text_size::TextSize;
 
 use crate::{
-    RawSyntaxKind,
-    Syntax,
+    RawSyntaxKind, Syntax,
     green::{GreenElement, GreenNode, GreenToken},
-    interning::{Interner, TokenInterner, TokenKey, new_interner},
+    interning::{Interner, TokenData, TokenInterner, TokenKey, new_interner},
     util::NodeOrToken,
     utility_types::MaybeOwned,
 };
@@ -29,13 +31,18 @@ const CHILDREN_CACHE_THRESHOLD: usize = 3;
 /// A `NodeCache` deduplicates identical tokens and small nodes during tree construction.
 /// You can re-use the same cache for multiple similar trees with [`GreenNodeBuilder::with_cache`].
 #[derive(Debug)]
-pub struct NodeCache<'i, I = TokenInterner> {
-    nodes:    FxHashMap<GreenNodeHead, GreenNode>,
-    tokens:   FxHashMap<GreenTokenData, GreenToken>,
+pub struct NodeCache<'i, Data: TokenData + ?Sized = str, I = TokenInterner<Data>> {
+    nodes: FxHashMap<GreenNodeHead, GreenNode>,
+    tokens: FxHashMap<GreenTokenData, GreenToken>,
     interner: MaybeOwned<'i, I>,
+    _data: core::marker::PhantomData<fn() -> Data>,
 }
 
-impl NodeCache<'static> {
+impl<Data> NodeCache<'static, Data, TokenInterner<Data>>
+where
+    Data: TokenData + ?Sized,
+    Data::Owned: Borrow<Data>,
+{
     /// Constructs a new, empty cache.
     ///
     /// By default, this will also create a default interner to deduplicate source text (strings) across
@@ -61,22 +68,28 @@ impl NodeCache<'static> {
     /// ```
     pub fn new() -> Self {
         Self {
-            nodes:    FxHashMap::default(),
-            tokens:   FxHashMap::default(),
+            nodes: FxHashMap::default(),
+            tokens: FxHashMap::default(),
             interner: MaybeOwned::Owned(new_interner()),
+            _data: core::marker::PhantomData,
         }
     }
 }
 
-impl Default for NodeCache<'static> {
+impl<Data> Default for NodeCache<'static, Data, TokenInterner<Data>>
+where
+    Data: TokenData + ?Sized,
+    Data::Owned: Borrow<Data>,
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'i, I> NodeCache<'i, I>
+impl<'i, Data, I> NodeCache<'i, Data, I>
 where
-    I: Interner<TokenKey>,
+    Data: TokenData + ?Sized,
+    I: Interner<TokenKey, Data>,
 {
     /// Constructs a new, empty cache that will use the given interner to deduplicate source text
     /// (strings) across tokens.
@@ -108,9 +121,10 @@ where
     #[inline]
     pub fn with_interner(interner: &'i mut I) -> Self {
         Self {
-            nodes:    FxHashMap::default(),
-            tokens:   FxHashMap::default(),
+            nodes: FxHashMap::default(),
+            tokens: FxHashMap::default(),
             interner: MaybeOwned::Borrowed(interner),
+            _data: core::marker::PhantomData,
         }
     }
 
@@ -145,9 +159,10 @@ where
     #[inline]
     pub fn from_interner(interner: I) -> Self {
         Self {
-            nodes:    FxHashMap::default(),
-            tokens:   FxHashMap::default(),
+            nodes: FxHashMap::default(),
+            tokens: FxHashMap::default(),
             interner: MaybeOwned::Owned(interner),
+            _data: core::marker::PhantomData,
         }
     }
 
@@ -211,8 +226,13 @@ where
     }
 
     #[inline(always)]
-    fn intern(&mut self, text: &str) -> TokenKey {
-        self.interner.get_or_intern(text)
+    fn intern(&mut self, data: &Data) -> TokenKey {
+        self.interner.get_or_intern(data)
+    }
+
+    #[inline(always)]
+    fn intern_bytes(&mut self, bytes: &[u8]) -> TokenKey {
+        self.interner.get_or_intern_bytes(bytes)
     }
 
     /// Creates a [`GreenNode`] by looking inside the cache or inserting
@@ -236,10 +256,10 @@ where
             .clone()
     }
 
-    fn token<S: Syntax>(&mut self, kind: S, text: Option<TokenKey>, len: u32) -> GreenToken {
-        let text_len = TextSize::from(len);
+    fn token<S: Syntax<Data = Data>>(&mut self, kind: S, data: Option<TokenKey>, len: u32) -> GreenToken {
+        let data_len = TextSize::from(len);
         let kind = S::into_raw(kind);
-        let data = GreenTokenData { kind, text, text_len };
+        let data = GreenTokenData { kind, data, data_len };
         self.tokens
             .entry(data)
             .or_insert_with_key(|data| GreenToken::new(*data))
@@ -251,7 +271,7 @@ where
 #[derive(Clone, Copy, Debug)]
 pub struct Checkpoint {
     parent_idx: usize,
-    child_idx:  usize,
+    child_idx: usize,
 }
 
 /// A builder for green trees.
@@ -279,24 +299,32 @@ pub struct Checkpoint {
 /// assert_eq!(int.as_token().unwrap().text(&resolver), Some("42"));
 /// ```
 #[derive(Debug)]
-pub struct GreenNodeBuilder<'cache, 'interner, S: Syntax, I = TokenInterner> {
-    cache:    MaybeOwned<'cache, NodeCache<'interner, I>>,
-    parents:  Vec<(S, usize)>,
+pub struct GreenNodeBuilder<'cache, 'interner, S: Syntax, I = TokenInterner<<S as Syntax>::Data>> {
+    cache: MaybeOwned<'cache, NodeCache<'interner, S::Data, I>>,
+    parents: Vec<(S, usize)>,
     children: Vec<GreenElement>,
 }
 
-impl<S: Syntax> GreenNodeBuilder<'static, 'static, S> {
+impl<S> GreenNodeBuilder<'static, 'static, S>
+where
+    S: Syntax,
+    <S::Data as ToOwned>::Owned: Borrow<S::Data>,
+{
     /// Creates new builder with an empty [`NodeCache`].
     pub fn new() -> Self {
         Self {
-            cache:    MaybeOwned::Owned(NodeCache::new()),
-            parents:  Vec::with_capacity(8),
+            cache: MaybeOwned::Owned(NodeCache::new()),
+            parents: Vec::with_capacity(8),
             children: Vec::with_capacity(8),
         }
     }
 }
 
-impl<S: Syntax> Default for GreenNodeBuilder<'static, 'static, S> {
+impl<S> Default for GreenNodeBuilder<'static, 'static, S>
+where
+    S: Syntax,
+    <S::Data as ToOwned>::Owned: Borrow<S::Data>,
+{
     fn default() -> Self {
         Self::new()
     }
@@ -305,14 +333,14 @@ impl<S: Syntax> Default for GreenNodeBuilder<'static, 'static, S> {
 impl<'cache, 'interner, S, I> GreenNodeBuilder<'cache, 'interner, S, I>
 where
     S: Syntax,
-    I: Interner<TokenKey>,
+    I: Interner<TokenKey, S::Data>,
 {
     /// Reusing a [`NodeCache`] between multiple builders saves memory, as it allows to structurally
     /// share underlying trees.
-    pub fn with_cache(cache: &'cache mut NodeCache<'interner, I>) -> Self {
+    pub fn with_cache(cache: &'cache mut NodeCache<'interner, S::Data, I>) -> Self {
         Self {
-            cache:    MaybeOwned::Borrowed(cache),
-            parents:  Vec::with_capacity(8),
+            cache: MaybeOwned::Borrowed(cache),
+            parents: Vec::with_capacity(8),
             children: Vec::with_capacity(8),
         }
     }
@@ -342,10 +370,10 @@ where
     /// assert_eq!(int.kind(), MySyntax::into_raw(Int));
     /// assert_eq!(int.as_token().unwrap().text(&interner), Some("42"));
     /// ```
-    pub fn from_cache(cache: NodeCache<'interner, I>) -> Self {
+    pub fn from_cache(cache: NodeCache<'interner, S::Data, I>) -> Self {
         Self {
-            cache:    MaybeOwned::Owned(cache),
-            parents:  Vec::with_capacity(8),
+            cache: MaybeOwned::Owned(cache),
+            parents: Vec::with_capacity(8),
             children: Vec::with_capacity(8),
         }
     }
@@ -402,19 +430,41 @@ where
     /// ## Panics
     /// In debug mode, if `kind` has static text, this function will verify that `text` matches that text.
     #[inline]
-    pub fn token(&mut self, kind: S, text: &str) {
-        let token = match S::static_text(kind) {
-            Some(static_text) => {
+    pub fn token(&mut self, kind: S, data: &S::Data) {
+        let token = match S::static_data(kind) {
+            Some(static_data) => {
                 debug_assert_eq!(
-                    static_text, text,
-                    r#"Received `{kind:?}` token which should have text "{static_text}", but "{text}" was given."#
+                    static_data.as_bytes(),
+                    data.as_bytes(),
+                    "received `{kind:?}` token with data that does not match its static data"
                 );
-                self.cache.token::<S>(kind, None, static_text.len() as u32)
+                self.cache.token::<S>(kind, None, static_data.as_bytes().len() as u32)
             }
             None => {
-                let len = text.len() as u32;
-                let text = self.cache.intern(text);
-                self.cache.token::<S>(kind, Some(text), len)
+                let len = data.as_bytes().len() as u32;
+                let data = self.cache.intern(data);
+                self.cache.token::<S>(kind, Some(data), len)
+            }
+        };
+        self.children.push(token.into());
+    }
+
+    /// Add a new token from canonical bytes to the current node.
+    #[inline]
+    pub fn token_from_bytes(&mut self, kind: S, bytes: &[u8]) {
+        let token = match S::static_data(kind) {
+            Some(static_data) => {
+                debug_assert_eq!(
+                    static_data.as_bytes(),
+                    bytes,
+                    "received `{kind:?}` token bytes that do not match its static data"
+                );
+                self.cache.token::<S>(kind, None, static_data.as_bytes().len() as u32)
+            }
+            None => {
+                let len = bytes.len() as u32;
+                let data = self.cache.intern_bytes(bytes);
+                self.cache.token::<S>(kind, Some(data), len)
             }
         };
         self.children.push(token.into());
@@ -431,8 +481,8 @@ where
     /// If `kind` does not have static text, i.e., `L::static_text(kind)` returns `None`.
     #[inline]
     pub fn static_token(&mut self, kind: S) {
-        let static_text = S::static_text(kind).unwrap_or_else(|| panic!("Missing static text for '{kind:?}'"));
-        let token = self.cache.token::<S>(kind, None, static_text.len() as u32);
+        let static_data = S::static_data(kind).unwrap_or_else(|| panic!("Missing static data for '{kind:?}'"));
+        let token = self.cache.token::<S>(kind, None, static_data.as_bytes().len() as u32);
         self.children.push(token.into());
     }
 
@@ -483,7 +533,7 @@ where
     pub fn checkpoint(&self) -> Checkpoint {
         Checkpoint {
             parent_idx: self.parents.len(),
-            child_idx:  self.children.len(),
+            child_idx: self.children.len(),
         }
     }
 
@@ -633,7 +683,7 @@ where
     ///  as its second return value to allow re-using the cache or extracting the underlying string
     ///  [`Interner`]. See also [`NodeCache::into_interner`].
     #[inline]
-    pub fn finish(mut self) -> (GreenNode, Option<NodeCache<'interner, I>>) {
+    pub fn finish(mut self) -> (GreenNode, Option<NodeCache<'interner, S::Data, I>>) {
         assert_eq!(self.children.len(), 1);
         let cache = self.cache.into_owned();
         match self.children.pop().unwrap() {

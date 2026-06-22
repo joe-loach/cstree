@@ -1,58 +1,67 @@
-#![cfg(not(feature = "lasso_compat"))]
-
 extern crate alloc;
 
-use alloc::{
-    string::{String, ToString},
-    sync::Arc as StdArc,
-};
-use core::fmt;
+use alloc::{sync::Arc as StdArc, vec::Vec};
+use core::{borrow::Borrow, fmt, marker::PhantomData};
 
-use indexmap::IndexSet;
+use hashbrown::HashMap;
 use rustc_hash::FxBuildHasher;
 
-use super::{InternKey, Interner, Resolver, TokenKey};
+use super::{InternKey, Interner, Resolver, TokenData, TokenDataError, TokenKey};
 
-/// The default [`Interner`] used to deduplicate green token strings.
+/// The default [`Interner`] used to deduplicate green token data.
 #[derive(Debug)]
-pub struct TokenInterner {
-    id_set: IndexSet<String, FxBuildHasher>,
+pub struct TokenInterner<Data: TokenData + ?Sized = str> {
+    keys: HashMap<Vec<u8>, TokenKey, FxBuildHasher>,
+    values: Vec<Data::Owned>,
+    _data: PhantomData<fn() -> Data>,
 }
 
-impl TokenInterner {
+impl<Data: TokenData + ?Sized> TokenInterner<Data> {
     pub(in crate::interning) fn new() -> Self {
         Self {
-            id_set: IndexSet::default(),
+            keys: HashMap::default(),
+            values: Vec::new(),
+            _data: PhantomData,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InternerError {
     KeySpaceExhausted,
+    InvalidData(TokenDataError),
 }
 
 impl fmt::Display for InternerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             InternerError::KeySpaceExhausted => write!(f, "key space exhausted"),
+            InternerError::InvalidData(error) => write!(f, "{error}"),
         }
     }
 }
 
 impl core::error::Error for InternerError {}
 
-impl Resolver<TokenKey> for TokenInterner {
-    fn try_resolve(&self, key: TokenKey) -> Option<&str> {
+impl<Data> Resolver<TokenKey, Data> for TokenInterner<Data>
+where
+    Data: TokenData + ?Sized,
+    Data::Owned: Borrow<Data>,
+{
+    fn try_resolve(&self, key: TokenKey) -> Option<&Data> {
         let index = key.into_u32() as usize;
-        self.id_set.get_index(index).map(String::as_str)
+        self.values.get(index).map(Borrow::borrow)
     }
 }
 
-impl Resolver<TokenKey> for StdArc<TokenInterner> {
-    fn try_resolve(&self, key: TokenKey) -> Option<&str> {
+impl<Data> Resolver<TokenKey, Data> for StdArc<TokenInterner<Data>>
+where
+    Data: TokenData + ?Sized,
+    Data::Owned: Borrow<Data>,
+{
+    fn try_resolve(&self, key: TokenKey) -> Option<&Data> {
         let index = key.into_u32() as usize;
-        self.id_set.get_index(index).map(String::as_str)
+        self.values.get(index).map(Borrow::borrow)
     }
 }
 
@@ -60,24 +69,30 @@ impl Resolver<TokenKey> for StdArc<TokenInterner> {
 // Set indices start at 0, so everything shifts down by 1.
 const N_INDICES: usize = u32::MAX as usize;
 
-impl Interner<TokenKey> for TokenInterner {
+impl<Data> Interner<TokenKey, Data> for TokenInterner<Data>
+where
+    Data: TokenData + ?Sized,
+    Data::Owned: Borrow<Data>,
+{
     type Error = InternerError;
 
-    fn try_get_or_intern(&mut self, text: &str) -> Result<TokenKey, Self::Error> {
-        if let Some(index) = self.id_set.get_index_of(text) {
-            let raw_key = u32::try_from(index).unwrap_or_else(|_| {
-                panic!("found interned text with invalid index `{index}` (index too high for keyspace)")
-            });
-            return Ok(TokenKey::try_from_u32(raw_key).unwrap_or_else(|| {
-                panic!("found interned text with invalid index `{index}` (index too high for keyspace)")
-            }));
-        } else if self.id_set.len() >= N_INDICES {
+    fn try_get_or_intern(&mut self, data: &Data) -> Result<TokenKey, Self::Error> {
+        self.try_get_or_intern_bytes(data.as_bytes())
+    }
+
+    fn try_get_or_intern_bytes(&mut self, bytes: &[u8]) -> Result<TokenKey, Self::Error> {
+        if let Some(key) = self.keys.get(bytes) {
+            return Ok(*key);
+        } else if self.values.len() >= N_INDICES {
             return Err(InternerError::KeySpaceExhausted);
         }
 
-        let (index, added) = self.id_set.insert_full(text.to_string());
-        debug_assert!(added, "tried to intern duplicate text");
+        let owned = Data::from_bytes(bytes).map_err(InternerError::InvalidData)?;
+        let index = self.values.len();
         let raw_key = u32::try_from(index).unwrap_or_else(|_| panic!("interned `{index}` despite keyspace exhaustion"));
-        TokenKey::try_from_u32(raw_key).ok_or(InternerError::KeySpaceExhausted)
+        let key = TokenKey::try_from_u32(raw_key).ok_or(InternerError::KeySpaceExhausted)?;
+        self.values.push(owned);
+        self.keys.insert(bytes.to_vec(), key);
+        Ok(key)
     }
 }

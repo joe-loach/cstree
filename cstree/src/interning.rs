@@ -1,4 +1,4 @@
-//! Types and Traits for efficient String storage and deduplication.
+//! Types and Traits for efficient token data storage and deduplication.
 //!
 //! Because `cstree` is aimed at _concrete_ syntax trees that faithfully represent all of the original program input,
 //! `cstree` aks for the text of each token when building a syntax tree. You'll notice this when looking at
@@ -115,16 +115,11 @@ pub use self::traits::*;
 
 mod default_interner;
 
-#[cfg(not(feature = "lasso_compat"))]
 #[doc(inline)]
 pub use default_interner::TokenInterner;
 
 #[cfg(feature = "lasso_compat")]
 mod lasso_compat;
-
-#[cfg(feature = "lasso_compat")]
-#[doc(inline)]
-pub use lasso_compat::TokenInterner;
 
 #[cfg(feature = "multi_threaded_interning")]
 #[doc(inline)]
@@ -140,8 +135,8 @@ pub mod salsa_compat;
 
 use core::{fmt, num::NonZeroU32};
 
-/// The intern key type for the source text of [`GreenToken`s](crate::green::GreenToken).
-/// Each unique key uniquely identifies a deduplicated, interned source string.
+/// The intern key type for the source data of [`GreenToken`s](crate::green::GreenToken).
+/// Each unique key uniquely identifies deduplicated, interned token data.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct TokenKey {
@@ -174,7 +169,10 @@ impl fmt::Debug for TokenKey {
 ///
 /// If you need the interner to be multi-threaded, see [`new_threaded_interner`].
 #[inline]
-pub fn new_interner() -> TokenInterner {
+pub fn new_interner<Data>() -> TokenInterner<Data>
+where
+    Data: TokenData + ?Sized,
+{
     TokenInterner::new()
 }
 

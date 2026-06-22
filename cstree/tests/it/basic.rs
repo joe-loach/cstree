@@ -184,3 +184,128 @@ fn assert_debug_display() {
     fn dbg<T: fmt::Debug>() {}
     dbg::<GreenNodeBuilder<'static, 'static, SyntaxKind>>();
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+enum ByteKind {
+    Root,
+    Bytes,
+    Plus,
+}
+
+impl Syntax for ByteKind {
+    type Data = [u8];
+
+    fn from_raw(raw: RawSyntaxKind) -> Self {
+        match raw.0 {
+            0 => Self::Root,
+            1 => Self::Bytes,
+            2 => Self::Plus,
+            _ => panic!("invalid byte kind"),
+        }
+    }
+
+    fn into_raw(self) -> RawSyntaxKind {
+        RawSyntaxKind(self as u32)
+    }
+
+    fn static_data(self) -> Option<&'static Self::Data> {
+        match self {
+            Self::Plus => Some(b"+"),
+            _ => None,
+        }
+    }
+}
+
+#[test]
+fn byte_token_data() {
+    let mut builder = GreenNodeBuilder::<ByteKind>::new();
+    builder.start_node(ByteKind::Root);
+    builder.token(ByteKind::Bytes, b"\xff\x00abc".as_slice());
+    builder.static_token(ByteKind::Plus);
+    builder.token(ByteKind::Bytes, b"\xff\x00abc".as_slice());
+    builder.finish_node();
+    let (green, cache) = builder.finish();
+    let resolver = cache.unwrap().into_interner().unwrap();
+    let root = cstree::syntax::SyntaxNode::<ByteKind>::new_root(green);
+
+    let first = root.first_token().unwrap();
+    let plus = first.next_token().unwrap();
+    let second = plus.next_token().unwrap();
+
+    assert_eq!(first.resolve_data(&resolver), b"\xff\x00abc");
+    assert_eq!(plus.static_data(), Some(b"+".as_slice()));
+    assert_eq!(root.resolve_data(&resolver).len(), 11.into());
+    assert!(first.data_eq(second));
+    assert_eq!(first.data_key(), second.data_key());
+
+    let chunks = root
+        .resolve_data(&resolver)
+        .fold_chunks(Vec::new(), |mut chunks, chunk| {
+            chunks.push(chunk.to_vec());
+            chunks
+        });
+    assert_eq!(
+        chunks,
+        vec![b"\xff\x00abc".to_vec(), b"+".to_vec(), b"\xff\x00abc".to_vec()]
+    );
+}
+
+#[cfg(feature = "bytemuck")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+struct Pair {
+    a: u32,
+    b: u32,
+}
+
+#[cfg(feature = "bytemuck")]
+unsafe impl bytemuck::Zeroable for Pair {}
+
+#[cfg(feature = "bytemuck")]
+unsafe impl bytemuck::Pod for Pair {}
+
+#[cfg(feature = "bytemuck")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+enum PairKind {
+    Root,
+    Pair,
+}
+
+#[cfg(feature = "bytemuck")]
+impl Syntax for PairKind {
+    type Data = Pair;
+
+    fn from_raw(raw: RawSyntaxKind) -> Self {
+        match raw.0 {
+            0 => Self::Root,
+            1 => Self::Pair,
+            _ => panic!("invalid pair kind"),
+        }
+    }
+
+    fn into_raw(self) -> RawSyntaxKind {
+        RawSyntaxKind(self as u32)
+    }
+}
+
+#[cfg(feature = "bytemuck")]
+#[test]
+fn typed_token_data() {
+    let value = Pair { a: 1, b: 2 };
+    let mut builder = GreenNodeBuilder::<PairKind>::new();
+    builder.start_node(PairKind::Root);
+    builder.token(PairKind::Pair, &value);
+    builder.token(PairKind::Pair, &value);
+    builder.finish_node();
+    let (green, cache) = builder.finish();
+    let resolver = cache.unwrap().into_interner().unwrap();
+    let root = cstree::syntax::SyntaxNode::<PairKind>::new_root(green);
+
+    let first = root.first_token().unwrap();
+    let second = first.next_token().unwrap();
+    assert_eq!(first.resolve_data(&resolver), &value);
+    assert!(first.data_eq(second));
+    assert_eq!(first.data_key(), second.data_key());
+}

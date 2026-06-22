@@ -1,4 +1,4 @@
-//! Efficient representation of the source text that is covered by a [`SyntaxNode`].
+//! Efficient representation of source data and text covered by a [`SyntaxNode`].
 
 extern crate alloc;
 
@@ -6,11 +6,127 @@ use core::fmt;
 
 use crate::{
     Syntax,
-    interning::{Resolver, TokenKey},
+    interning::{Resolver, TokenData, TokenKey},
     syntax::{SyntaxNode, SyntaxToken},
     text::{TextRange, TextSize},
 };
 use alloc::string::{String, ToString};
+
+/// An efficient representation of the data covered by a [`SyntaxNode`], i.e. the combined bytes of all descendant
+/// tokens.
+pub struct SyntaxData<'n, 'i, I: ?Sized, S: Syntax, D: 'static = ()> {
+    node: &'n SyntaxNode<S, D>,
+    range: TextRange,
+    resolver: &'i I,
+}
+
+impl<I: ?Sized, S: Syntax, D> Clone for SyntaxData<'_, '_, I, S, D> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<I: ?Sized, S: Syntax, D> Copy for SyntaxData<'_, '_, I, S, D> {}
+
+impl<'n, 'i, I, S, D> SyntaxData<'n, 'i, I, S, D>
+where
+    I: Resolver<TokenKey, S::Data> + ?Sized,
+    S: Syntax,
+{
+    pub(crate) fn new(node: &'n SyntaxNode<S, D>, resolver: &'i I) -> Self {
+        let range = node.text_range();
+        SyntaxData { node, range, resolver }
+    }
+
+    /// The combined length of this data, in bytes.
+    pub fn len(&self) -> TextSize {
+        self.range.len()
+    }
+
+    /// Returns `true` if [`self.len()`](SyntaxData::len) is zero.
+    pub fn is_empty(&self) -> bool {
+        self.range.is_empty()
+    }
+
+    /// Indexes this data by the given byte range and returns the corresponding slice representation.
+    pub fn slice<Ra: private::SyntaxTextRange>(&self, range: Ra) -> Self {
+        let start = range.start().unwrap_or_default();
+        let end = range.end().unwrap_or_else(|| self.len());
+        assert!(start <= end);
+        let len = end - start;
+        let start = self.range.start() + start;
+        let end = start + len;
+        let range = TextRange::new(start, end);
+        assert!(self.range.contains_range(range));
+        SyntaxData {
+            node: self.node,
+            range,
+            resolver: self.resolver,
+        }
+    }
+
+    /// Applies the given function to byte chunks from descendant tokens.
+    pub fn try_fold_chunks<T, F, E>(&self, init: T, mut f: F) -> Result<T, E>
+    where
+        F: FnMut(T, &'i [u8]) -> Result<T, E>,
+    {
+        self.tokens_with_ranges().try_fold(init, move |acc, (token, range)| {
+            let start = u32::from(range.start()) as usize;
+            let end = u32::from(range.end()) as usize;
+            f(acc, &token.resolve_data(self.resolver).as_bytes()[start..end])
+        })
+    }
+
+    /// Applies the given function to byte chunks from descendant tokens.
+    pub fn fold_chunks<T, F>(&self, init: T, mut f: F) -> T
+    where
+        F: FnMut(T, &[u8]) -> T,
+    {
+        enum Void {}
+        match self.try_fold_chunks(init, |acc, chunk| Ok::<T, Void>(f(acc, chunk))) {
+            Ok(t) => t,
+            Err(void) => match void {},
+        }
+    }
+
+    /// Applies the given function to byte chunks until it fails.
+    pub fn try_for_each_chunk<F: FnMut(&[u8]) -> Result<(), E>, E>(&self, mut f: F) -> Result<(), E> {
+        self.try_fold_chunks((), move |(), chunk| f(chunk))
+    }
+
+    /// Applies the given function to all byte chunks.
+    pub fn for_each_chunk<F: FnMut(&[u8])>(&self, mut f: F) {
+        self.fold_chunks((), |(), chunk| f(chunk))
+    }
+
+    fn tokens_with_ranges(&self) -> impl Iterator<Item = (&'n SyntaxToken<S, D>, TextRange)> + use<'i, 'n, I, S, D> {
+        let text_range = self.range;
+        self.node
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter_map(move |token| {
+                let token_range = token.text_range();
+                let range = text_range.intersect(token_range)?;
+                Some((token, range - token_range.start()))
+            })
+    }
+}
+
+impl<I, S, D> fmt::Debug for SyntaxData<'_, '_, I, S, D>
+where
+    I: Resolver<TokenKey, S::Data> + ?Sized,
+    S: Syntax,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list()
+            .entries(self.tokens_with_ranges().map(|(token, range)| {
+                let start = u32::from(range.start()) as usize;
+                let end = u32::from(range.end()) as usize;
+                &token.resolve_data(self.resolver).as_bytes()[start..end]
+            }))
+            .finish()
+    }
+}
 
 /// An efficient representation of the text that is covered by a [`SyntaxNode`], i.e. the combined
 /// source text of all tokens that are descendants of the node.
@@ -44,8 +160,8 @@ use alloc::string::{String, ToString};
 /// assert_eq!(sub, "748");
 /// ```
 pub struct SyntaxText<'n, 'i, I: ?Sized, S: Syntax, D: 'static = ()> {
-    node:     &'n SyntaxNode<S, D>,
-    range:    TextRange,
+    node: &'n SyntaxNode<S, D>,
+    range: TextRange,
     resolver: &'i I,
 }
 
@@ -57,7 +173,7 @@ impl<I: ?Sized, S: Syntax, D> Clone for SyntaxText<'_, '_, I, S, D> {
 
 impl<I: ?Sized, S: Syntax, D> Copy for SyntaxText<'_, '_, I, S, D> {}
 
-impl<'n, 'i, I: Resolver<TokenKey> + ?Sized, S: Syntax, D> SyntaxText<'n, 'i, I, S, D> {
+impl<'n, 'i, I: Resolver<TokenKey, str> + ?Sized, S: Syntax<Data = str>, D> SyntaxText<'n, 'i, I, S, D> {
     pub(crate) fn new(node: &'n SyntaxNode<S, D>, resolver: &'i I) -> Self {
         let range = node.text_range();
         SyntaxText { node, range, resolver }
@@ -216,25 +332,25 @@ fn found<T>(res: Result<(), T>) -> Option<T> {
     res.err()
 }
 
-impl<I: Resolver<TokenKey> + ?Sized, S: Syntax, D> fmt::Debug for SyntaxText<'_, '_, I, S, D> {
+impl<I: Resolver<TokenKey, str> + ?Sized, S: Syntax<Data = str>, D> fmt::Debug for SyntaxText<'_, '_, I, S, D> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&self.to_string(), f)
     }
 }
 
-impl<I: Resolver<TokenKey> + ?Sized, S: Syntax, D> fmt::Display for SyntaxText<'_, '_, I, S, D> {
+impl<I: Resolver<TokenKey, str> + ?Sized, S: Syntax<Data = str>, D> fmt::Display for SyntaxText<'_, '_, I, S, D> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.try_for_each_chunk(|chunk| fmt::Display::fmt(chunk, f))
     }
 }
 
-impl<I: Resolver<TokenKey> + ?Sized, S: Syntax, D> From<SyntaxText<'_, '_, I, S, D>> for String {
+impl<I: Resolver<TokenKey, str> + ?Sized, S: Syntax<Data = str>, D> From<SyntaxText<'_, '_, I, S, D>> for String {
     fn from(text: SyntaxText<'_, '_, I, S, D>) -> String {
         text.to_string()
     }
 }
 
-impl<I: Resolver<TokenKey> + ?Sized, S: Syntax, D> PartialEq<str> for SyntaxText<'_, '_, I, S, D> {
+impl<I: Resolver<TokenKey, str> + ?Sized, S: Syntax<Data = str>, D> PartialEq<str> for SyntaxText<'_, '_, I, S, D> {
     fn eq(&self, mut rhs: &str) -> bool {
         self.try_for_each_chunk(|chunk| {
             if !rhs.starts_with(chunk) {
@@ -248,19 +364,19 @@ impl<I: Resolver<TokenKey> + ?Sized, S: Syntax, D> PartialEq<str> for SyntaxText
     }
 }
 
-impl<I: Resolver<TokenKey> + ?Sized, S: Syntax, D> PartialEq<SyntaxText<'_, '_, I, S, D>> for str {
+impl<I: Resolver<TokenKey, str> + ?Sized, S: Syntax<Data = str>, D> PartialEq<SyntaxText<'_, '_, I, S, D>> for str {
     fn eq(&self, rhs: &SyntaxText<'_, '_, I, S, D>) -> bool {
         rhs == self
     }
 }
 
-impl<I: Resolver<TokenKey> + ?Sized, S: Syntax, D> PartialEq<&'_ str> for SyntaxText<'_, '_, I, S, D> {
+impl<I: Resolver<TokenKey, str> + ?Sized, S: Syntax<Data = str>, D> PartialEq<&'_ str> for SyntaxText<'_, '_, I, S, D> {
     fn eq(&self, rhs: &&str) -> bool {
         self == *rhs
     }
 }
 
-impl<I: Resolver<TokenKey> + ?Sized, S: Syntax, D> PartialEq<SyntaxText<'_, '_, I, S, D>> for &'_ str {
+impl<I: Resolver<TokenKey, str> + ?Sized, S: Syntax<Data = str>, D> PartialEq<SyntaxText<'_, '_, I, S, D>> for &'_ str {
     fn eq(&self, rhs: &SyntaxText<'_, '_, I, S, D>) -> bool {
         rhs == self
     }
@@ -268,10 +384,10 @@ impl<I: Resolver<TokenKey> + ?Sized, S: Syntax, D> PartialEq<SyntaxText<'_, '_, 
 
 impl<I1, I2, S1, S2, D1, D2> PartialEq<SyntaxText<'_, '_, I2, S2, D2>> for SyntaxText<'_, '_, I1, S1, D1>
 where
-    S1: Syntax,
-    S2: Syntax,
-    I1: Resolver<TokenKey> + ?Sized,
-    I2: Resolver<TokenKey> + ?Sized,
+    S1: Syntax<Data = str>,
+    S2: Syntax<Data = str>,
+    I1: Resolver<TokenKey, str> + ?Sized,
+    I2: Resolver<TokenKey, str> + ?Sized,
 {
     fn eq(&self, other: &SyntaxText<'_, '_, I2, S2, D2>) -> bool {
         if self.range.len() != other.range.len() {
@@ -294,12 +410,12 @@ fn zip_texts<'it1, 'it2, It1, It2, I1, I2, S1, S2, D1, D2>(
 where
     It1: Iterator<Item = (&'it1 SyntaxToken<S1, D1>, TextRange)>,
     It2: Iterator<Item = (&'it2 SyntaxToken<S2, D2>, TextRange)>,
-    I1: Resolver<TokenKey> + ?Sized,
-    I2: Resolver<TokenKey> + ?Sized,
+    I1: Resolver<TokenKey, str> + ?Sized,
+    I2: Resolver<TokenKey, str> + ?Sized,
     D1: 'static,
     D2: 'static,
-    S1: Syntax + 'it1,
-    S2: Syntax + 'it2,
+    S1: Syntax<Data = str> + 'it1,
+    S2: Syntax<Data = str> + 'it2,
 {
     let mut x = xs.next()?;
     let mut y = ys.next()?;
@@ -321,7 +437,7 @@ where
     }
 }
 
-impl<I: Resolver<TokenKey> + ?Sized, S: Syntax, D> Eq for SyntaxText<'_, '_, I, S, D> {}
+impl<I: Resolver<TokenKey, str> + ?Sized, S: Syntax<Data = str>, D> Eq for SyntaxText<'_, '_, I, S, D> {}
 
 mod private {
     use core::ops;
@@ -395,6 +511,8 @@ mod tests {
     pub struct SyntaxKind(u32);
 
     impl Syntax for SyntaxKind {
+        type Data = str;
+
         fn from_raw(raw: RawSyntaxKind) -> Self {
             Self(raw.0)
         }
@@ -403,7 +521,7 @@ mod tests {
             RawSyntaxKind(self.0)
         }
 
-        fn static_text(self) -> Option<&'static str> {
+        fn static_data(self) -> Option<&'static Self::Data> {
             match self.0 {
                 1 => Some("{"),
                 2 => Some("}"),

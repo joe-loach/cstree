@@ -70,6 +70,8 @@
 //! # use cstree::{Syntax, RawSyntaxKind};
 //!
 //! impl Syntax for Calculator {
+//!     type Data = str;
+//!
 //!     fn from_raw(raw: RawSyntaxKind) -> Self {
 //!         // This just needs to be the inverse of `into_raw`, but could also
 //!         // be an `impl TryFrom<u32> for SyntaxKind` or any other conversion.
@@ -89,7 +91,7 @@
 //!         RawSyntaxKind(self as u32)
 //!     }
 //!
-//!     fn static_text(self) -> Option<&'static str> {
+//!     fn static_data(self) -> Option<&'static Self::Data> {
 //!         match self {
 //!             SyntaxKind::Plus => Some("+"),
 //!             SyntaxKind::Minus => Some("-"),

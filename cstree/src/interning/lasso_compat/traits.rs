@@ -97,6 +97,11 @@ macro_rules! compat_interner {
                     .ok_or(LassoCompatError::KeyConversionError { lasso_key: raw_key })
             }
 
+            fn try_get_or_intern_bytes(&mut self, bytes: &[u8]) -> Result<TokenKey, Self::Error> {
+                let text = core::str::from_utf8(bytes).expect("lasso interners only support UTF-8 data");
+                <Self as Interner<TokenKey>>::try_get_or_intern(self, text)
+            }
+
             fn get_or_intern(&mut self, text: &str) -> TokenKey {
                 let lasso_key = <Self as lasso::Interner<K>>::get_or_intern(self, text);
                 let raw_key = K::into_usize(lasso_key);
@@ -105,6 +110,11 @@ macro_rules! compat_interner {
                     .and_then(TokenKey::try_from_u32)
                     .ok_or(LassoCompatError::KeyConversionError { lasso_key: raw_key })
                     .unwrap_or_else(|_| panic!("invalid key: failed to convert `lasso::Key` `{raw_key}` to `InternKey` (failed to intern {text:?})"))
+            }
+
+            fn get_or_intern_bytes(&mut self, bytes: &[u8]) -> TokenKey {
+                let text = core::str::from_utf8(bytes).expect("lasso interners only support UTF-8 data");
+                <Self as Interner<TokenKey>>::get_or_intern(self, text)
             }
         }
     };
@@ -141,6 +151,11 @@ mod multi_threaded {
                 .ok_or(LassoCompatError::KeyConversionError { lasso_key: raw_key })
         }
 
+        fn try_get_or_intern_bytes(&mut self, bytes: &[u8]) -> Result<TokenKey, Self::Error> {
+            let text = core::str::from_utf8(bytes).expect("lasso interners only support UTF-8 data");
+            <Self as Interner<TokenKey>>::try_get_or_intern(self, text)
+        }
+
         fn get_or_intern(&mut self, text: &str) -> TokenKey {
             let lasso_key = <Self as lasso::Interner<K>>::get_or_intern(self, text);
             let raw_key = K::into_usize(lasso_key);
@@ -149,6 +164,11 @@ mod multi_threaded {
             .and_then(TokenKey::try_from_u32)
             .ok_or(LassoCompatError::KeyConversionError { lasso_key: raw_key })
             .unwrap_or_else(|_| panic!("invalid key: failed to convert `lasso::Key` `{raw_key}` to `InternKey` (failed to intern {text:?})"))
+        }
+
+        fn get_or_intern_bytes(&mut self, bytes: &[u8]) -> TokenKey {
+            let text = core::str::from_utf8(bytes).expect("lasso interners only support UTF-8 data");
+            <Self as Interner<TokenKey>>::get_or_intern(self, text)
         }
     }
 }

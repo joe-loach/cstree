@@ -22,6 +22,8 @@ pub enum SyntaxKind {
 type Calculator = SyntaxKind;
 
 impl Syntax for Calculator {
+    type Data = str;
+
     fn from_raw(raw: RawSyntaxKind) -> Self {
         // This just needs to be the inverse of `into_raw`, but could also
         // be an `impl TryFrom<u32> for SyntaxKind` or any other conversion.
@@ -41,7 +43,7 @@ impl Syntax for Calculator {
         RawSyntaxKind(self as u32)
     }
 
-    fn static_text(self) -> Option<&'static str> {
+    fn static_data(self) -> Option<&'static Self::Data> {
         match self {
             SyntaxKind::Plus => Some("+"),
             SyntaxKind::Minus => Some("-"),
@@ -63,7 +65,7 @@ pub enum Token<'input> {
 }
 
 pub struct Lexer<'input> {
-    input:  &'input str,
+    input: &'input str,
     at_eof: bool,
 }
 
@@ -131,14 +133,14 @@ impl<'input> Iterator for Lexer<'input> {
 }
 
 pub struct Parser<'input> {
-    lexer:   Peekable<Lexer<'input>>,
+    lexer: Peekable<Lexer<'input>>,
     builder: GreenNodeBuilder<'static, 'static, Calculator>,
 }
 
 impl<'input> Parser<'input> {
     pub fn new(input: &'input str) -> Self {
         Self {
-            lexer:   Lexer::new(input).peekable(),
+            lexer: Lexer::new(input).peekable(),
             builder: GreenNodeBuilder::new(),
         }
     }

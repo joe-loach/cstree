@@ -7,8 +7,7 @@ mod sendsync;
 mod serde;
 
 use cstree::{
-    RawSyntaxKind,
-    Syntax,
+    RawSyntaxKind, Syntax,
     build::{GreenNodeBuilder, NodeCache},
     green::GreenNode,
     interning::{Interner, Resolver},
@@ -36,6 +35,8 @@ pub enum Element<'s> {
 pub struct SyntaxKind(u32);
 
 impl Syntax for SyntaxKind {
+    type Data = str;
+
     fn from_raw(raw: RawSyntaxKind) -> Self {
         Self(raw.0)
     }
@@ -44,12 +45,12 @@ impl Syntax for SyntaxKind {
         RawSyntaxKind(self.0)
     }
 
-    fn static_text(self) -> Option<&'static str> {
+    fn static_data(self) -> Option<&'static Self::Data> {
         None
     }
 }
 
-pub fn build_tree_with_cache<I>(root: &Element<'_>, cache: &mut NodeCache<'_, I>) -> GreenNode
+pub fn build_tree_with_cache<I>(root: &Element<'_>, cache: &mut NodeCache<'_, str, I>) -> GreenNode
 where
     I: Interner,
 {

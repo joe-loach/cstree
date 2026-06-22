@@ -1,10 +1,6 @@
 extern crate alloc;
 
-use alloc::{
-    format,
-    string::{String, ToString},
-    sync::Arc as AllocArc,
-};
+use alloc::{string::String, sync::Arc as AllocArc};
 use core::{
     fmt,
     hash::{Hash, Hasher},
@@ -15,10 +11,9 @@ use text_size::{TextRange, TextSize};
 
 use super::*;
 use crate::{
-    RawSyntaxKind,
-    Syntax,
+    RawSyntaxKind, Syntax,
     green::{GreenNode, GreenToken},
-    interning::{Resolver, TokenKey},
+    interning::{Resolver, TokenData, TokenKey},
     traversal::Direction,
 };
 
@@ -26,7 +21,7 @@ use crate::{
 #[derive(Debug)]
 pub struct SyntaxToken<S: Syntax, D: 'static = ()> {
     parent: SyntaxNode<S, D>,
-    index:  u32,
+    index: u32,
     offset: TextSize,
 }
 
@@ -34,7 +29,7 @@ impl<S: Syntax, D> Clone for SyntaxToken<S, D> {
     fn clone(&self) -> Self {
         Self {
             parent: self.parent.clone(),
-            index:  self.index,
+            index: self.index,
             offset: self.offset,
         }
     }
@@ -60,21 +55,26 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     /// Writes this token's [`Debug`](fmt::Debug) representation into the given `target`.
     pub fn write_debug<R>(&self, resolver: &R, target: &mut impl fmt::Write) -> fmt::Result
     where
-        R: Resolver<TokenKey> + ?Sized,
+        R: Resolver<TokenKey, S::Data> + ?Sized,
     {
         write!(target, "{:?}@{:?}", self.kind(), self.text_range())?;
-        let text = self.resolve_text(resolver);
-        if text.len() < 25 {
-            return write!(target, " {text:?}");
-        }
-
-        for idx in 21..25 {
-            if text.is_char_boundary(idx) {
-                let text = format!("{} ...", &text[..idx]);
+        let data = self.resolve_data(resolver).as_bytes();
+        if let Ok(text) = core::str::from_utf8(data) {
+            if text.len() < 25 {
                 return write!(target, " {text:?}");
             }
+            for idx in 21..25 {
+                if text.is_char_boundary(idx) {
+                    let text = alloc::format!("{} ...", &text[..idx]);
+                    return write!(target, " {text:?}");
+                }
+            }
+            unreachable!()
+        } else if data.len() < 25 {
+            write!(target, " {data:?}")
+        } else {
+            write!(target, " {:?} ...", &data[..24])
         }
-        unreachable!()
     }
 
     /// Returns this token's [`Debug`](fmt::Debug) representation as a string.
@@ -83,7 +83,7 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     #[inline]
     pub fn debug<R>(&self, resolver: &R) -> String
     where
-        R: Resolver<TokenKey> + ?Sized,
+        R: Resolver<TokenKey, S::Data> + ?Sized,
     {
         // NOTE: `fmt::Write` methods on `String` never fail
         let mut res = String::new();
@@ -95,9 +95,13 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     #[inline]
     pub fn write_display<R>(&self, resolver: &R, target: &mut impl fmt::Write) -> fmt::Result
     where
-        R: Resolver<TokenKey> + ?Sized,
+        R: Resolver<TokenKey, S::Data> + ?Sized,
     {
-        write!(target, "{}", self.resolve_text(resolver))
+        let data = self.resolve_data(resolver).as_bytes();
+        match core::str::from_utf8(data) {
+            Ok(text) => write!(target, "{text}"),
+            Err(_) => write!(target, "{data:?}"),
+        }
     }
 
     /// Returns this token's [`Display`](fmt::Display) representation as a string.
@@ -106,14 +110,16 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     #[inline]
     pub fn display<R>(&self, resolver: &R) -> String
     where
-        R: Resolver<TokenKey> + ?Sized,
+        R: Resolver<TokenKey, S::Data> + ?Sized,
     {
-        self.resolve_text(resolver).to_string()
+        let mut res = String::new();
+        self.write_display(resolver, &mut res).unwrap();
+        res
     }
 
     /// If there is a resolver associated with this tree, returns it.
     #[inline]
-    pub fn resolver(&self) -> Option<&AllocArc<dyn Resolver<TokenKey>>> {
+    pub fn resolver(&self) -> Option<&AllocArc<dyn Resolver<TokenKey, S::Data>>> {
         self.parent.resolver()
     }
 
@@ -181,17 +187,33 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
         TextRange::at(self.offset, self.green().text_len())
     }
 
-    /// Uses the provided resolver to return the source text of this token.
+    /// Uses the provided resolver to return the source data of this token.
     ///
-    /// If no text is explicitly associated with the token, returns its [`static_text`](SyntaxToken::static_text)
+    /// If no data is explicitly associated with the token, returns its [`static_data`](SyntaxToken::static_data)
     /// instead.
+    #[inline]
+    pub fn resolve_data<'i, I>(&self, resolver: &'i I) -> &'i S::Data
+    where
+        I: Resolver<TokenKey, S::Data> + ?Sized,
+    {
+        // one of the two must be present upon construction
+        self.static_data().or_else(|| self.green().data(resolver)).unwrap()
+    }
+
+    /// Uses the provided resolver to return the source text of this token.
     #[inline]
     pub fn resolve_text<'i, I>(&self, resolver: &'i I) -> &'i str
     where
-        I: Resolver<TokenKey> + ?Sized,
+        S: Syntax<Data = str>,
+        I: Resolver<TokenKey, str> + ?Sized,
     {
-        // one of the two must be present upon construction
-        self.static_text().or_else(|| self.green().text(resolver)).unwrap()
+        self.resolve_data(resolver)
+    }
+
+    /// If the [syntax kind](Syntax) of this token always represents the same data, returns that data.
+    #[inline(always)]
+    pub fn static_data(&self) -> Option<&'static S::Data> {
+        S::static_data(self.kind())
     }
 
     /// If the [syntax kind](Syntax) of this token always represents the same text, returns
@@ -223,8 +245,11 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     /// assert_eq!(plus.static_text(), Some("+"));
     /// ```
     #[inline(always)]
-    pub fn static_text(&self) -> Option<&'static str> {
-        S::static_text(self.kind())
+    pub fn static_text(&self) -> Option<&'static str>
+    where
+        S: Syntax<Data = str>,
+    {
+        self.static_data()
     }
 
     /// Returns `true` if `self` and `other` represent equal source text.
@@ -267,17 +292,23 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     /// assert!(first_plus.text_eq(&second_plus));
     /// ```
     #[inline]
-    pub fn text_eq(&self, other: &Self) -> bool {
-        if let Some(k1) = self.green().text_key() {
-            match other.green().text_key() {
+    pub fn data_eq(&self, other: &Self) -> bool {
+        if let Some(k1) = self.green().data_key() {
+            match other.green().data_key() {
                 Some(k2) => return k1 == k2,
-                None => return false, // a kind with static text cannot be equal to one with non-static text
+                None => return false, // a kind with static data cannot be equal to one with non-static data
             }
         }
 
-        debug_assert!(self.static_text().is_some());
-        debug_assert!(other.static_text().is_some());
+        debug_assert!(self.static_data().is_some());
+        debug_assert!(other.static_data().is_some());
         self.syntax_kind() == other.syntax_kind()
+    }
+
+    /// Returns `true` if `self` and `other` represent equal source text.
+    #[inline]
+    pub fn text_eq(&self, other: &Self) -> bool {
+        self.data_eq(other)
     }
 
     /// Returns the interned key of text covered by this token, if any.
@@ -328,8 +359,14 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     /// let typ = type_table.type_of(ident.text_key().unwrap());
     /// ```
     #[inline]
+    pub fn data_key(&self) -> Option<TokenKey> {
+        self.green().data_key()
+    }
+
+    /// Returns the interned key of text covered by this token, if any.
+    #[inline]
     pub fn text_key(&self) -> Option<TokenKey> {
-        self.green().text_key()
+        self.data_key()
     }
 
     /// Returns the unterlying green tree token of this token.

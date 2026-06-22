@@ -14,8 +14,7 @@ use core::{
 use text_size::{TextRange, TextSize};
 
 use crate::{
-    RawSyntaxKind,
-    Syntax,
+    RawSyntaxKind, Syntax,
     green::GreenNode,
     interning::{Resolver, TokenKey},
     syntax::*,
@@ -156,7 +155,7 @@ impl<S: Syntax, D> From<ResolvedToken<S, D>> for ResolvedElement<S, D> {
 
 impl<S: Syntax, D> ResolvedElement<S, D> {
     #[allow(missing_docs)]
-    pub fn display(&self, resolver: &impl Resolver<TokenKey>) -> String {
+    pub fn display(&self, resolver: &impl Resolver<TokenKey, S::Data>) -> String {
         match self {
             NodeOrToken::Node(it) => it.display(resolver),
             NodeOrToken::Token(it) => it.display(resolver),
@@ -209,7 +208,17 @@ impl<S: Syntax, D> ResolvedNode<S, D> {
     /// source text covered by this node, i.e. the combined text of all token leafs of the subtree
     /// originating in this node.
     #[inline]
-    pub fn text(&self) -> SyntaxText<'_, '_, dyn Resolver<TokenKey>, S, D> {
+    pub fn data(&self) -> SyntaxData<'_, '_, dyn Resolver<TokenKey, S::Data>, S, D> {
+        SyntaxData::new(self, &**self.resolver())
+    }
+
+    /// Uses the resolver associated with this tree to return an efficient representation of all
+    /// source text covered by this node.
+    #[inline]
+    pub fn text(&self) -> SyntaxText<'_, '_, dyn Resolver<TokenKey, str>, S, D>
+    where
+        S: Syntax<Data = str>,
+    {
         SyntaxText::new(self, &**self.resolver())
     }
 }
@@ -229,11 +238,20 @@ impl<S: Syntax, D> fmt::Display for ResolvedNode<S, D> {
 impl<S: Syntax, D> ResolvedToken<S, D> {
     /// Uses the resolver associated with this tree to return the source text of this token.
     #[inline]
-    pub fn text(&self) -> &str {
+    pub fn data(&self) -> &S::Data {
         // one of the two must be present upon construction
-        self.static_text()
-            .or_else(|| self.green().text(&**self.resolver()))
+        self.static_data()
+            .or_else(|| self.green().data(&**self.resolver()))
             .unwrap()
+    }
+
+    /// Uses the resolver associated with this tree to return the source text of this token.
+    #[inline]
+    pub fn text(&self) -> &str
+    where
+        S: Syntax<Data = str>,
+    {
+        self.data()
     }
 }
 
@@ -261,7 +279,7 @@ where
         D: serde::Serialize,
     {
         crate::serde_impls::SerializeWithData {
-            node:     self,
+            node: self,
             resolver: self.resolver().as_ref(),
         }
     }
@@ -298,13 +316,13 @@ macro_rules! forward_node {
 
 impl<S: Syntax, D> ResolvedNode<S, D> {
     /// Returns the [`Resolver`] associated with this tree.
-    pub fn resolver(&self) -> &AllocArc<dyn Resolver<TokenKey>> {
+    pub fn resolver(&self) -> &AllocArc<dyn Resolver<TokenKey, S::Data>> {
         self.syntax.resolver().unwrap()
     }
 
     /// See [`SyntaxNode::new_root_with_resolver`].
     #[inline]
-    pub fn new_root_with_resolver(green: GreenNode, resolver: impl Resolver<TokenKey> + 'static) -> Self {
+    pub fn new_root_with_resolver(green: GreenNode, resolver: impl Resolver<TokenKey, S::Data> + 'static) -> Self {
         SyntaxNode::new_root_with_resolver(green, resolver)
     }
 
@@ -530,7 +548,7 @@ impl<S: Syntax, D> ResolvedNode<S, D> {
 
 impl<S: Syntax, D> ResolvedToken<S, D> {
     /// Returns the [`Resolver`] associated with this tree.
-    pub fn resolver(&self) -> &AllocArc<dyn Resolver<TokenKey>> {
+    pub fn resolver(&self) -> &AllocArc<dyn Resolver<TokenKey, S::Data>> {
         self.syntax.resolver().unwrap()
     }
 

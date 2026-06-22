@@ -17,7 +17,7 @@ mod iter;
 pub use iter::{SyntaxElementChildren, SyntaxNodeChildren};
 
 mod text;
-pub use text::SyntaxText;
+pub use text::{SyntaxData, SyntaxText};
 
 // A note on `#[inline]` usage in this module:
 // In `rowan`, there are two layers of `SyntaxXY`s: the `cursor` layer and the `api` layer.

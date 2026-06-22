@@ -20,3 +20,19 @@ fn basic() {
     assert!(MySyntax::static_text(SyntaxKind::A).is_none());
     assert_eq!(MySyntax::static_text(SyntaxKind::B), Some("b"));
 }
+
+#[test]
+fn byte_data() {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Syntax)]
+    #[syntax(data = [u8])]
+    #[repr(u32)]
+    pub enum SyntaxKind {
+        A,
+        #[static_data(b"b".as_slice())]
+        B,
+    }
+    pub type MySyntax = SyntaxKind;
+
+    assert_eq!(MySyntax::static_data(SyntaxKind::A), None);
+    assert_eq!(MySyntax::static_data(SyntaxKind::B), Some(b"b".as_slice()));
+}

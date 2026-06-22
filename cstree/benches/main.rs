@@ -2,8 +2,7 @@ use core::hint::black_box;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use cstree::{
-    RawSyntaxKind,
-    Syntax,
+    RawSyntaxKind, Syntax,
     build::*,
     green::GreenNode,
     interning::{Interner, new_interner},
@@ -23,6 +22,8 @@ pub enum TestKind {
 }
 
 impl Syntax for TestKind {
+    type Data = str;
+
     fn from_raw(raw: RawSyntaxKind) -> Self {
         if raw.0 == u32::MAX - 1 {
             TestKind::Plus
@@ -38,7 +39,7 @@ impl Syntax for TestKind {
         }
     }
 
-    fn static_text(self) -> Option<&'static str> {
+    fn static_data(self) -> Option<&'static Self::Data> {
         match self {
             TestKind::Plus => Some("+"),
             TestKind::Element { .. } => None,
@@ -46,7 +47,11 @@ impl Syntax for TestKind {
     }
 }
 
-pub fn build_tree_with_cache<I>(root: &Element<'_>, cache: &mut NodeCache<'_, I>, use_static_text: bool) -> GreenNode
+pub fn build_tree_with_cache<I>(
+    root: &Element<'_>,
+    cache: &mut NodeCache<'_, str, I>,
+    use_static_text: bool,
+) -> GreenNode
 where
     I: Interner,
 {

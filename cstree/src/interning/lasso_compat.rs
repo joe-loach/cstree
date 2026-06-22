@@ -4,6 +4,7 @@
 
 mod token_interner;
 #[doc(inline)]
+#[allow(unused_imports)]
 pub use token_interner::*;
 
 mod traits;

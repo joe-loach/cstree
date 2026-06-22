@@ -1,6 +1,7 @@
 //! Default interner implementations based on `lasso`.
 
 #![cfg(feature = "lasso_compat")]
+#![allow(dead_code)]
 
 extern crate alloc;
 
@@ -46,7 +47,19 @@ macro_rules! impl_traits {
             }
 
             #[inline]
+            fn try_get_or_intern_bytes(&mut self, bytes: &[u8]) -> Result<TokenKey, Self::Error> {
+                let text = core::str::from_utf8(bytes).expect("lasso token interner only supports UTF-8 data");
+                self.rodeo.try_get_or_intern(text)
+            }
+
+            #[inline]
             fn get_or_intern(&mut self, text: &str) -> TokenKey {
+                self.rodeo.get_or_intern(text)
+            }
+
+            #[inline]
+            fn get_or_intern_bytes(&mut self, bytes: &[u8]) -> TokenKey {
+                let text = core::str::from_utf8(bytes).expect("lasso token interner only supports UTF-8 data");
                 self.rodeo.get_or_intern(text)
             }
         }

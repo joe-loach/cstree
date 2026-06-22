@@ -1,20 +1,18 @@
 //! Serialization and Deserialization for syntax trees.
 
 use crate::{
-    RawSyntaxKind,
-    Syntax,
+    RawSyntaxKind, Syntax,
     build::GreenNodeBuilder,
-    interning::{Resolver, TokenKey},
+    interning::{Resolver, TokenData, TokenKey},
     syntax::{ResolvedNode, SyntaxNode},
     traversal::WalkEvent,
     util::NodeOrToken,
 };
 extern crate alloc;
-use alloc::{collections::VecDeque, vec::Vec};
+use alloc::{borrow::Cow, collections::VecDeque, vec::Vec};
 use core::{fmt, marker::PhantomData};
 use serde::{
-    Deserialize,
-    Serialize,
+    Deserialize, Serialize,
     de::{Error, SeqAccess, Visitor},
     ser::SerializeTuple,
 };
@@ -62,7 +60,7 @@ macro_rules! gen_serialize {
 
                 Some(Event::EnterNode($l::into_raw(node.kind()), has_data))
             }
-            WalkEvent::Enter(NodeOrToken::Token(tok)) => Some(Event::Token($l::into_raw(tok.kind()), tok.resolve_text($resolver))),
+            WalkEvent::Enter(NodeOrToken::Token(tok)) => Some(Event::Token($l::into_raw(tok.kind()), TokenPayload(Cow::Borrowed(tok.resolve_data($resolver).as_bytes())))),
 
             WalkEvent::Leave(NodeOrToken::Node(_)) => Some(Event::LeaveNode),
             WalkEvent::Leave(NodeOrToken::Token(_)) => None,
@@ -81,31 +79,111 @@ macro_rules! gen_serialize {
 
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "t", content = "c")]
-enum Event<'text> {
+#[serde(bound(deserialize = "'data: 'de"))]
+enum Event<'data> {
     /// The second parameter indicates if this node needs data.
     /// If the boolean is true, the next element inside the data list
     /// must be attached to this node.
     EnterNode(RawSyntaxKind, bool),
-    Token(RawSyntaxKind, &'text str),
+    Token(RawSyntaxKind, #[serde(borrow)] TokenPayload<'data>),
     LeaveNode,
+}
+
+struct TokenPayload<'data>(Cow<'data, [u8]>);
+
+impl Serialize for TokenPayload<'_> {
+    fn serialize<Ser>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error>
+    where
+        Ser: serde::Serializer,
+    {
+        match core::str::from_utf8(self.0.as_ref()) {
+            Ok(text) => serializer.serialize_str(text),
+            Err(_) => serializer.serialize_bytes(self.0.as_ref()),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for TokenPayload<'de> {
+    fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
+    where
+        De: serde::Deserializer<'de>,
+    {
+        struct PayloadVisitor;
+
+        impl<'de> Visitor<'de> for PayloadVisitor {
+            type Value = TokenPayload<'de>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a string or byte sequence")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                Ok(TokenPayload(Cow::Owned(value.as_bytes().to_vec())))
+            }
+
+            fn visit_borrowed_str<E>(self, value: &'de str) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                self.visit_str(value)
+            }
+
+            fn visit_string<E>(self, value: alloc::string::String) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                Ok(TokenPayload(Cow::Owned(value.into_bytes())))
+            }
+
+            fn visit_bytes<E>(self, value: &[u8]) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                Ok(TokenPayload(Cow::Owned(value.to_vec())))
+            }
+
+            fn visit_byte_buf<E>(self, value: Vec<u8>) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                Ok(TokenPayload(Cow::Owned(value)))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut bytes = Vec::new();
+                while let Some(byte) = seq.next_element()? {
+                    bytes.push(byte);
+                }
+                Ok(TokenPayload(Cow::Owned(bytes)))
+            }
+        }
+
+        deserializer.deserialize_any(PayloadVisitor)
+    }
 }
 
 /// Make a `SyntaxNode` serializable but without serializing the data.
 pub(crate) struct SerializeWithResolver<'node, 'resolver, S: Syntax, D: 'static, R: ?Sized> {
-    pub(crate) node:     &'node SyntaxNode<S, D>,
+    pub(crate) node: &'node SyntaxNode<S, D>,
     pub(crate) resolver: &'resolver R,
 }
 
 /// Make a `SyntaxNode` serializable which will include the data for serialization.
 pub(crate) struct SerializeWithData<'node, 'resolver, S: Syntax, D: 'static, R: ?Sized> {
-    pub(crate) node:     &'node SyntaxNode<S, D>,
+    pub(crate) node: &'node SyntaxNode<S, D>,
     pub(crate) resolver: &'resolver R,
 }
 
 impl<S, D, R> Serialize for SerializeWithData<'_, '_, S, D, R>
 where
     S: Syntax,
-    R: Resolver<TokenKey> + ?Sized,
+    R: Resolver<TokenKey, S::Data> + ?Sized,
     D: Serialize,
 {
     fn serialize<Ser>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error>
@@ -120,7 +198,7 @@ where
 impl<S, D, R> Serialize for SerializeWithResolver<'_, '_, S, D, R>
 where
     S: Syntax,
-    R: Resolver<TokenKey> + ?Sized,
+    R: Resolver<TokenKey, S::Data> + ?Sized,
 {
     fn serialize<Ser>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error>
     where
@@ -140,7 +218,7 @@ where
         Ser: serde::Serializer,
     {
         let node = SerializeWithResolver {
-            node:     self,
+            node: self,
             resolver: self.resolver().as_ref(),
         };
         node.serialize(serializer)
@@ -194,7 +272,7 @@ where
                             builder.start_node(S::from_raw(kind));
                             data_indices.push_back(has_data);
                         }
-                        Event::Token(kind, text) => builder.token(S::from_raw(kind), text),
+                        Event::Token(kind, data) => builder.token_from_bytes(S::from_raw(kind), data.0.as_ref()),
                         Event::LeaveNode => builder.finish_node(),
                     }
                 }

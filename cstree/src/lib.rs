@@ -136,7 +136,7 @@ pub struct RawSyntaxKind(pub u32);
 
 /// Typesafe representations of text ranges and sizes.
 pub mod text {
-    pub use crate::syntax::SyntaxText;
+    pub use crate::syntax::{SyntaxData, SyntaxText};
     pub use text_size::{TextLen, TextRange, TextSize};
 }
 
@@ -152,8 +152,7 @@ pub mod build {
 /// A convenient collection of the most used parts of `cstree`.
 pub mod prelude {
     pub use crate::{
-        RawSyntaxKind,
-        Syntax,
+        RawSyntaxKind, Syntax,
         build::GreenNodeBuilder,
         green::{GreenNode, GreenToken},
         syntax::{SyntaxElement, SyntaxNode, SyntaxToken},
@@ -211,11 +210,21 @@ pub mod sync {
 ///
 /// [`SyntaxNode`]: crate::syntax::SyntaxNode
 pub trait Syntax: Sized + Copy + fmt::Debug + Eq {
+    /// Token payload type stored by this language.
+    type Data: interning::TokenData + ?Sized;
+
     /// Construct a semantic item kind from the compact representation.
     fn from_raw(raw: RawSyntaxKind) -> Self;
 
     /// Convert a semantic item kind into a more compact representation.
     fn into_raw(self) -> RawSyntaxKind;
+
+    /// Fixed data for a particular syntax kind.
+    ///
+    /// Implement for kinds that will only ever represent the same token data.
+    fn static_data(self) -> Option<&'static Self::Data> {
+        None
+    }
 
     /// Fixed text for a particular syntax kind.
     /// Implement for kinds that will only ever represent the same text, such as punctuation (like a
@@ -224,7 +233,12 @@ pub trait Syntax: Sized + Copy + fmt::Debug + Eq {
     /// Indicating tokens that have a `static_text` this way allows `cstree` to store them more efficiently, which makes
     /// it faster to add them to a syntax tree and to look up their text. Since there can often be many occurrences
     /// of these tokens inside a file, doing so will improve the performance of using `cstree`.
-    fn static_text(self) -> Option<&'static str>;
+    fn static_text(self) -> Option<&'static str>
+    where
+        Self: Syntax<Data = str>,
+    {
+        self.static_data()
+    }
 }
 
 #[cfg(feature = "derive")]
@@ -262,6 +276,8 @@ pub mod testing {
     pub use TestSyntaxKind::*;
 
     impl Syntax for TestSyntaxKind {
+        type Data = str;
+
         fn from_raw(raw: RawSyntaxKind) -> Self {
             assert!(raw.0 <= TestSyntaxKind::__LAST as u32);
             unsafe { core::mem::transmute::<u32, Self>(raw.0) }
@@ -271,7 +287,7 @@ pub mod testing {
             RawSyntaxKind(self as u32)
         }
 
-        fn static_text(self) -> Option<&'static str> {
+        fn static_data(self) -> Option<&'static Self::Data> {
             match self {
                 TestSyntaxKind::Plus => Some("+"),
                 _ => None,
