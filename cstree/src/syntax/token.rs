@@ -58,23 +58,8 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
         R: Resolver<TokenKey, S::Data> + ?Sized,
     {
         write!(target, "{:?}@{:?}", self.kind(), self.text_range())?;
-        let data = self.resolve_data(resolver).as_bytes();
-        if let Ok(text) = core::str::from_utf8(data) {
-            if text.len() < 25 {
-                return write!(target, " {text:?}");
-            }
-            for idx in 21..25 {
-                if text.is_char_boundary(idx) {
-                    let text = alloc::format!("{} ...", &text[..idx]);
-                    return write!(target, " {text:?}");
-                }
-            }
-            unreachable!()
-        } else if data.len() < 25 {
-            write!(target, " {data:?}")
-        } else {
-            write!(target, " {:?} ...", &data[..24])
-        }
+        write!(target, " ")?;
+        self.resolve_data(resolver).fmt_debug(target)
     }
 
     /// Returns this token's [`Debug`](fmt::Debug) representation as a string.
@@ -97,11 +82,7 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     where
         R: Resolver<TokenKey, S::Data> + ?Sized,
     {
-        let data = self.resolve_data(resolver).as_bytes();
-        match core::str::from_utf8(data) {
-            Ok(text) => write!(target, "{text}"),
-            Err(_) => write!(target, "{data:?}"),
-        }
+        self.resolve_data(resolver).fmt_display(target)
     }
 
     /// Returns this token's [`Display`](fmt::Display) representation as a string.

@@ -308,4 +308,6 @@ fn typed_token_data() {
     assert_eq!(first.resolve_data(&resolver), &value);
     assert!(first.data_eq(second));
     assert_eq!(first.data_key(), second.data_key());
+    assert_eq!(first.debug(&resolver), "Pair@0..8 Pair { a: 1, b: 2 }");
+    assert_eq!(first.display(&resolver), "Pair { a: 1, b: 2 }");
 }

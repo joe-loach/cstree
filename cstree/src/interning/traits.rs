@@ -29,8 +29,33 @@ pub trait TokenData: ToOwned + 'static {
     /// Returns the canonical byte representation of this payload.
     fn as_bytes(&self) -> &[u8];
 
+    /// Writes this payload for token debug output.
+    fn fmt_debug<W: fmt::Write + ?Sized>(&self, f: &mut W) -> fmt::Result {
+        fmt_data_fallback(self.as_bytes(), f, true)
+    }
+
+    /// Writes this payload for token display output.
+    fn fmt_display<W: fmt::Write + ?Sized>(&self, f: &mut W) -> fmt::Result {
+        fmt_data_fallback(self.as_bytes(), f, false)
+    }
+
     /// Rebuilds an owned, properly aligned value from canonical bytes.
     fn from_bytes(bytes: &[u8]) -> Result<Self::Owned, TokenDataError>;
+}
+
+fn fmt_data_fallback<W: fmt::Write + ?Sized>(bytes: &[u8], f: &mut W, debug: bool) -> fmt::Result {
+    if let Ok(text) = core::str::from_utf8(bytes) {
+        if debug {
+            write!(f, "{text:?}")
+        } else {
+            f.write_str(text)
+        }
+    } else if bytes.len() < 25 {
+        write!(f, "{bytes:?}")
+    } else {
+        write!(f, "{:?}", &&bytes[..24])?;
+        f.write_str(" ...")
+    }
 }
 
 /// Error returned when bytes cannot be decoded as a token payload.
@@ -67,6 +92,16 @@ impl TokenData for str {
     }
 
     #[inline]
+    fn fmt_debug<W: fmt::Write + ?Sized>(&self, f: &mut W) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+
+    #[inline]
+    fn fmt_display<W: fmt::Write + ?Sized>(&self, f: &mut W) -> fmt::Result {
+        f.write_str(self)
+    }
+
+    #[inline]
     fn from_bytes(bytes: &[u8]) -> Result<Self::Owned, TokenDataError> {
         core::str::from_utf8(bytes)
             .map(str::to_owned)
@@ -89,11 +124,21 @@ impl TokenData for [u8] {
 #[cfg(feature = "bytemuck")]
 impl<T> TokenData for T
 where
-    T: bytemuck::Pod + Copy + 'static,
+    T: bytemuck::Pod + Copy + fmt::Debug + 'static,
 {
     #[inline]
     fn as_bytes(&self) -> &[u8] {
         bytemuck::bytes_of(self)
+    }
+
+    #[inline]
+    fn fmt_debug<W: fmt::Write + ?Sized>(&self, f: &mut W) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+
+    #[inline]
+    fn fmt_display<W: fmt::Write + ?Sized>(&self, f: &mut W) -> fmt::Result {
+        write!(f, "{self:?}")
     }
 
     #[inline]
