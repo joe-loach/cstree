@@ -6,8 +6,6 @@ pub struct Symbol(&'static str);
 
 pub const STATIC_TEXT: Symbol = Symbol("static_text");
 pub const STATIC_DATA: Symbol = Symbol("static_data");
-pub const SYNTAX: Symbol = Symbol("syntax");
-pub const DATA: Symbol = Symbol("data");
 pub const REPR: Symbol = Symbol("repr");
 pub const U32: Symbol = Symbol("u32");
 

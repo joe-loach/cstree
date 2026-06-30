@@ -6,23 +6,12 @@ mod sendsync;
 #[cfg(feature = "serialize")]
 mod serde;
 
-use cstree::{
-    RawSyntaxKind, Syntax,
-    build::{GreenNodeBuilder, NodeCache},
-    green::GreenNode,
-    interning::{Interner, Resolver},
-    util::NodeOrToken,
-};
+use cstree::{RawSyntaxKind, Syntax, build::GreenNodeBuilder, green::GreenNode, util::NodeOrToken};
 
 pub type SyntaxNode<D = ()> = cstree::syntax::SyntaxNode<SyntaxKind, D>;
 pub type SyntaxToken<D = ()> = cstree::syntax::SyntaxToken<SyntaxKind, D>;
 pub type SyntaxElement<D = ()> = cstree::syntax::SyntaxElement<SyntaxKind, D>;
 pub type SyntaxElementRef<'a, D = ()> = cstree::syntax::SyntaxElementRef<'a, SyntaxKind, D>;
-
-pub type ResolvedNode<D = ()> = cstree::syntax::ResolvedNode<SyntaxKind, D>;
-pub type ResolvedToken<D = ()> = cstree::syntax::ResolvedToken<SyntaxKind, D>;
-pub type ResolvedElement<D = ()> = cstree::syntax::ResolvedElement<SyntaxKind, D>;
-pub type ResolvedElementRef<'a, D = ()> = cstree::syntax::ResolvedElementRef<'a, SyntaxKind, D>;
 
 #[derive(Debug)]
 pub enum Element<'s> {
@@ -35,8 +24,6 @@ pub enum Element<'s> {
 pub struct SyntaxKind(u32);
 
 impl Syntax for SyntaxKind {
-    type Data = str;
-
     fn from_raw(raw: RawSyntaxKind) -> Self {
         Self(raw.0)
     }
@@ -45,30 +32,18 @@ impl Syntax for SyntaxKind {
         RawSyntaxKind(self.0)
     }
 
-    fn static_data(self) -> Option<&'static Self::Data> {
+    fn static_data(self) -> Option<&'static [u8]> {
         None
     }
 }
 
-pub fn build_tree_with_cache<I>(root: &Element<'_>, cache: &mut NodeCache<'_, str, I>) -> GreenNode
-where
-    I: Interner,
-{
-    let mut builder: GreenNodeBuilder<SyntaxKind, I> = GreenNodeBuilder::with_cache(cache);
+pub fn build_tree(root: &Element<'_>) -> GreenNode {
+    let mut builder = GreenNodeBuilder::new();
     build_recursive(root, &mut builder, 0);
-    let (node, cache) = builder.finish();
-    assert!(cache.is_none());
-    node
+    builder.finish()
 }
 
-pub fn build_recursive<I>(
-    root: &Element<'_>,
-    builder: &mut GreenNodeBuilder<'_, '_, SyntaxKind, I>,
-    mut from: u32,
-) -> u32
-where
-    I: Interner,
-{
+pub fn build_recursive(root: &Element<'_>, builder: &mut GreenNodeBuilder<SyntaxKind>, mut from: u32) -> u32 {
     match root {
         Element::Node(children) => {
             builder.start_node(SyntaxKind(from));
@@ -85,30 +60,27 @@ where
 }
 
 #[track_caller]
-pub fn assert_tree_eq(
-    (left, left_res): (&SyntaxNode, &impl Resolver),
-    (right, right_res): (&SyntaxNode, &impl Resolver),
-) {
+pub fn assert_tree_eq(left: &SyntaxNode, right: &SyntaxNode) {
     if left.green() == right.green() {
         return;
     }
 
     if left.kind() != right.kind() || left.children_with_tokens().len() != right.children_with_tokens().len() {
-        panic!("{} !=\n{}", left.debug(left_res, true), right.debug(right_res, true))
+        panic!("{} !=\n{}", left.debug(true), right.debug(true))
     }
 
     for elem in left.children_with_tokens().zip(right.children_with_tokens()) {
         match elem {
-            (NodeOrToken::Node(ln), NodeOrToken::Node(rn)) => assert_tree_eq((ln, left_res), (rn, right_res)),
+            (NodeOrToken::Node(ln), NodeOrToken::Node(rn)) => assert_tree_eq(ln, rn),
             (NodeOrToken::Node(n), NodeOrToken::Token(t)) => {
-                panic!("{} != {}", n.debug(left_res, true), t.debug(right_res))
+                panic!("{} != {}", n.debug(true), t.debug())
             }
             (NodeOrToken::Token(t), NodeOrToken::Node(n)) => {
-                panic!("{} != {}", t.debug(left_res), n.debug(right_res, true))
+                panic!("{} != {}", t.debug(), n.debug(true))
             }
             (NodeOrToken::Token(lt), NodeOrToken::Token(rt)) => {
-                if lt.syntax_kind() != rt.syntax_kind() || lt.resolve_text(left_res) != rt.resolve_text(right_res) {
-                    panic!("{} != {}", lt.debug(left_res), rt.debug(right_res))
+                if lt.syntax_kind() != rt.syntax_kind() || lt.data() != rt.data() {
+                    panic!("{} != {}", lt.debug(), rt.debug())
                 }
             }
         }

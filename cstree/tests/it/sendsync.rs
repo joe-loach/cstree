@@ -3,30 +3,17 @@
 use crossbeam_utils::thread::scope;
 use std::{thread, time::Duration};
 
-use super::{Element, ResolvedNode, SyntaxKind, SyntaxNode, build_recursive};
+use super::{Element, SyntaxKind, SyntaxNode, build_recursive};
 use cstree::build::GreenNodeBuilder;
 
-// Excercise the multi-threaded interner when the corresponding feature is enabled.
-
-#[cfg(feature = "multi_threaded_interning")]
-use cstree::interning::{MultiThreadedTokenInterner, new_threaded_interner};
-
-#[cfg(not(feature = "multi_threaded_interning"))]
-fn get_builder() -> GreenNodeBuilder<'static, 'static, SyntaxKind> {
+fn get_builder() -> GreenNodeBuilder<SyntaxKind> {
     GreenNodeBuilder::new()
 }
 
-#[cfg(feature = "multi_threaded_interning")]
-fn get_builder() -> GreenNodeBuilder<'static, 'static, SyntaxKind, MultiThreadedTokenInterner> {
-    let interner = new_threaded_interner();
-    GreenNodeBuilder::from_interner(interner)
-}
-
-fn build_tree<D>(root: &Element<'_>) -> ResolvedNode<D> {
+fn build_syntax_tree<D>(root: &Element<'_>) -> SyntaxNode<D> {
     let mut builder = get_builder();
     build_recursive(root, &mut builder, 0);
-    let (node, cache) = builder.finish();
-    SyntaxNode::new_root_with_resolver(node, cache.unwrap().into_interner().unwrap())
+    SyntaxNode::new_root(builder.finish())
 }
 
 fn two_level_tree() -> Element<'static> {
@@ -42,7 +29,7 @@ fn two_level_tree() -> Element<'static> {
 #[cfg_attr(miri, ignore)]
 fn send() {
     let tree = two_level_tree();
-    let tree = build_tree::<()>(&tree);
+    let tree = build_syntax_tree::<()>(&tree);
     let thread_tree = tree.clone();
     let thread = thread::spawn(move || {
         let leaf1_0 = thread_tree
@@ -53,7 +40,7 @@ fn send() {
             .next()
             .unwrap();
         let leaf1_0 = leaf1_0.into_token().unwrap();
-        leaf1_0.text().to_string()
+        leaf1_0.text().unwrap().to_string()
     });
     assert_eq!(thread.join().unwrap(), "1.0");
 }
@@ -62,7 +49,7 @@ fn send() {
 #[cfg_attr(miri, ignore)]
 fn send_data() {
     let tree = two_level_tree();
-    let tree = build_tree::<String>(&tree);
+    let tree = build_syntax_tree::<String>(&tree);
     let thread_tree = tree.clone();
     {
         let node2 = tree.children().nth(2).unwrap();
@@ -103,7 +90,7 @@ fn send_data() {
 #[cfg_attr(miri, ignore)]
 fn sync() {
     let tree = two_level_tree();
-    let tree = build_tree::<()>(&tree);
+    let tree = build_syntax_tree::<()>(&tree);
     let thread_tree = &tree;
     let result = scope(move |s| {
         s.spawn(move |_| {
@@ -115,7 +102,7 @@ fn sync() {
                 .next()
                 .unwrap();
             let leaf1_0 = leaf1_0.into_token().unwrap();
-            leaf1_0.resolve_text(thread_tree.resolver().as_ref()).to_string()
+            leaf1_0.text().unwrap().to_string()
         })
         .join()
         .unwrap()
@@ -127,7 +114,7 @@ fn sync() {
 #[cfg_attr(miri, ignore)]
 fn drop_send() {
     let tree = two_level_tree();
-    let tree = build_tree::<()>(&tree);
+    let tree = build_syntax_tree::<()>(&tree);
     let thread_tree = tree.clone();
     let thread = thread::spawn(move || {
         drop(thread_tree);
@@ -137,7 +124,7 @@ fn drop_send() {
     drop(tree);
 
     let tree = two_level_tree();
-    let tree = build_tree::<()>(&tree);
+    let tree = build_syntax_tree::<()>(&tree);
     let thread_tree = tree.clone();
     drop(tree);
     let thread = thread::spawn(move || {
@@ -152,7 +139,7 @@ fn drop_send() {
 #[allow(dropping_references)]
 fn drop_sync() {
     let tree = two_level_tree();
-    let tree = build_tree::<()>(&tree);
+    let tree = build_syntax_tree::<()>(&tree);
     let thread_tree = &tree;
     scope(move |s| {
         s.spawn(move |_| {

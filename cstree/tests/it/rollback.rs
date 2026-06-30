@@ -1,53 +1,51 @@
 use super::*;
-use cstree::interning::Resolver;
 
-type GreenNodeBuilder<'cache, 'interner> = cstree::build::GreenNodeBuilder<'cache, 'interner, SyntaxKind>;
+type GreenNodeBuilder = cstree::build::GreenNodeBuilder<SyntaxKind>;
 
-fn with_builder(f: impl FnOnce(&mut GreenNodeBuilder)) -> (SyntaxNode, impl Resolver) {
+fn with_builder(f: impl FnOnce(&mut GreenNodeBuilder)) -> SyntaxNode {
     let mut builder = GreenNodeBuilder::new();
     f(&mut builder);
-    let (node, cache) = builder.finish();
-    (SyntaxNode::new_root(node), cache.unwrap().into_interner().unwrap())
+    SyntaxNode::new_root(builder.finish())
 }
 
 #[test]
 #[should_panic = "`left == right` failed"]
 fn comparison_works() {
-    let (first, res1) = with_builder(|_| {});
-    let (second, res2) = with_builder(|builder| {
+    let first = with_builder(|_| {});
+    let second = with_builder(|builder| {
         builder.start_node(SyntaxKind(0));
         builder.token(SyntaxKind(1), "hi");
         builder.finish_node();
     });
-    assert_tree_eq((&first, &res1), (&second, &res2));
+    assert_tree_eq(&first, &second);
 }
 
 #[test]
 fn no_rollback_token() {
-    let (first, res1) = with_builder(|builder| {
+    let first = with_builder(|builder| {
         builder.start_node(SyntaxKind(0));
         builder.token(SyntaxKind(1), "hi");
         builder.finish_node();
     });
-    let (second, res2) = with_builder(|builder| {
+    let second = with_builder(|builder| {
         let checkpoint = builder.checkpoint();
         builder.token(SyntaxKind(1), "hi");
         builder.start_node_at(checkpoint, SyntaxKind(0));
         builder.finish_node();
     });
-    assert_tree_eq((&first, &res1), (&second, &res2));
+    assert_tree_eq(&first, &second);
 }
 
 #[test]
 fn no_rollback_node() {
-    let (first, res1) = with_builder(|builder| {
+    let first = with_builder(|builder| {
         builder.start_node(SyntaxKind(2));
         builder.start_node(SyntaxKind(0));
         builder.token(SyntaxKind(1), "hi");
         builder.finish_node();
         builder.finish_node();
     });
-    let (second, res2) = with_builder(|builder| {
+    let second = with_builder(|builder| {
         let checkpoint = builder.checkpoint();
         builder.start_node(SyntaxKind(0));
         builder.token(SyntaxKind(1), "hi");
@@ -55,13 +53,13 @@ fn no_rollback_node() {
         builder.start_node_at(checkpoint, SyntaxKind(2));
         builder.finish_node();
     });
-    assert_tree_eq((&first, &res1), (&second, &res2));
+    assert_tree_eq(&first, &second);
 }
 
 #[test]
 #[should_panic = "unfinished nodes"]
 fn no_rollback_unfinished_node() {
-    let (second, res2) = with_builder(|builder| {
+    let second = with_builder(|builder| {
         let checkpoint = builder.checkpoint();
         builder.start_node(SyntaxKind(0));
         builder.token(SyntaxKind(1), "hi");
@@ -69,16 +67,16 @@ fn no_rollback_unfinished_node() {
         builder.finish_node();
         builder.finish_node();
     });
-    println!("{}", second.debug(&res2, true));
+    println!("{}", second.debug(true));
 }
 
 #[test]
 fn simple() {
-    let (first, res1) = with_builder(|builder| {
+    let first = with_builder(|builder| {
         builder.start_node(SyntaxKind(0));
         builder.finish_node();
     });
-    let (second, res2) = with_builder(|builder| {
+    let second = with_builder(|builder| {
         builder.start_node(SyntaxKind(0));
 
         // Add a token, then remove it.
@@ -88,17 +86,17 @@ fn simple() {
 
         builder.finish_node();
     });
-    assert_tree_eq((&first, &res1), (&second, &res2));
+    assert_tree_eq(&first, &second);
 }
 
 #[test]
 fn nested() {
-    let (first, res1) = with_builder(|builder| {
+    let first = with_builder(|builder| {
         builder.start_node(SyntaxKind(0));
         builder.finish_node();
     });
 
-    let (second, res2) = with_builder(|builder| {
+    let second = with_builder(|builder| {
         builder.start_node(SyntaxKind(0));
         // Add two tokens, then remove both.
         let initial = builder.checkpoint();
@@ -109,7 +107,7 @@ fn nested() {
         builder.finish_node();
     });
 
-    let (third, res3) = with_builder(|builder| {
+    let third = with_builder(|builder| {
         builder.start_node(SyntaxKind(0));
 
         // Add two tokens, then remove one after the other.
@@ -123,17 +121,17 @@ fn nested() {
         builder.finish_node();
     });
 
-    assert_tree_eq((&first, &res1), (&second, &res2));
-    assert_tree_eq((&first, &res1), (&third, &res3));
+    assert_tree_eq(&first, &second);
+    assert_tree_eq(&first, &third);
 }
 
 #[test]
 fn unfinished_node() {
-    let (first, res1) = with_builder(|builder| {
+    let first = with_builder(|builder| {
         builder.start_node(SyntaxKind(2));
         builder.finish_node();
     });
-    let (second, res2) = with_builder(|builder| {
+    let second = with_builder(|builder| {
         builder.start_node(SyntaxKind(2));
         let checkpoint = builder.checkpoint();
         builder.start_node(SyntaxKind(0));
@@ -141,17 +139,17 @@ fn unfinished_node() {
         builder.revert_to(checkpoint);
         builder.finish_node();
     });
-    assert_tree_eq((&first, &res1), (&second, &res2));
+    assert_tree_eq(&first, &second);
 }
 
 #[test]
 #[should_panic = "checkpoint no longer valid after reverting to an earlier checkpoint"]
 fn misuse() {
-    let (first, res1) = with_builder(|builder| {
+    let first = with_builder(|builder| {
         builder.start_node(SyntaxKind(0));
         builder.finish_node();
     });
-    let (second, res2) = with_builder(|builder| {
+    let second = with_builder(|builder| {
         builder.start_node(SyntaxKind(0));
 
         // Add two tokens, but remove them in the wrong order.
@@ -165,7 +163,7 @@ fn misuse() {
         builder.finish_node();
     });
 
-    assert_tree_eq((&first, &res1), (&second, &res2));
+    assert_tree_eq(&first, &second);
 }
 
 #[test]
@@ -189,13 +187,13 @@ fn misuse2() {
 
 #[test]
 fn misuse3() {
-    let (first, res1) = with_builder(|builder| {
+    let first = with_builder(|builder| {
         builder.start_node(SyntaxKind(0));
         builder.token(SyntaxKind(3), "no");
         builder.finish_node();
     });
 
-    let (second, res2) = with_builder(|builder| {
+    let second = with_builder(|builder| {
         builder.start_node(SyntaxKind(0));
 
         // Add two tokens, revert to the initial state, add three tokens, and try to revert to an earlier checkpoint.
@@ -214,7 +212,7 @@ fn misuse3() {
         builder.finish_node();
     });
 
-    assert_tree_eq((&first, &res1), (&second, &res2));
+    assert_tree_eq(&first, &second);
 }
 
 #[test]
@@ -258,14 +256,14 @@ fn misuse_combined2() {
 
 #[test]
 fn revert_then_start() {
-    let (first, res1) = with_builder(|builder| {
+    let first = with_builder(|builder| {
         builder.start_node(SyntaxKind(0));
         builder.start_node(SyntaxKind(3));
         builder.token(SyntaxKind(2), "hello");
         builder.finish_node();
         builder.finish_node();
     });
-    let (second, res2) = with_builder(|builder| {
+    let second = with_builder(|builder| {
         builder.start_node(SyntaxKind(0));
 
         // Take two snapshots with only tokens between them, revert to the earlier one but then try to start a node at
@@ -279,17 +277,17 @@ fn revert_then_start() {
 
         builder.finish_node();
     });
-    assert_tree_eq((&first, &res1), (&second, &res2));
+    assert_tree_eq(&first, &second);
 }
 
 #[test]
 fn start_then_revert() {
-    let (first, res1) = with_builder(|builder| {
+    let first = with_builder(|builder| {
         builder.start_node(SyntaxKind(0));
         builder.token(SyntaxKind(2), "hello");
         builder.finish_node();
     });
-    let (second, res2) = with_builder(|builder| {
+    let second = with_builder(|builder| {
         builder.start_node(SyntaxKind(0));
 
         // Take two snapshots with only tokens between them, revert to the earlier one but then try to start a node at
@@ -302,5 +300,5 @@ fn start_then_revert() {
 
         builder.finish_node();
     });
-    assert_tree_eq((&first, &res1), (&second, &res2));
+    assert_tree_eq(&first, &second);
 }

@@ -2,16 +2,15 @@ extern crate alloc;
 
 use super::*;
 #[cfg(feature = "serialize")]
-use crate::serde_impls::{SerializeWithData, SerializeWithResolver};
+use crate::serde_impls::SerializeWithData;
 use crate::{
     RawSyntaxKind, Syntax,
     green::{GreenElementRef, GreenNode},
-    interning::{Resolver, TokenKey},
     text::*,
     traversal::*,
     util::*,
 };
-use alloc::{boxed::Box, string::String, sync::Arc as AllocArc, vec::Vec};
+use alloc::{boxed::Box, string::String, vec::Vec};
 use core::{
     cell::UnsafeCell,
     fmt,
@@ -27,7 +26,6 @@ use triomphe::Arc;
 /// Syntax nodes can be shared between threads.
 /// Every syntax tree is reference counted as a whole and nodes are pointer-sized, so copying
 /// individual nodes is relatively cheap.
-#[derive(Debug)]
 #[repr(transparent)]
 pub struct SyntaxNode<S: Syntax, D: 'static = ()> {
     data: NonNull<NodeData<S, D>>,
@@ -40,10 +38,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// Writes this node's [`Debug`](fmt::Debug) representation into the given `target`.
     /// If `recursive` is `true`, prints the entire subtree rooted in this node.
     /// Otherwise, only this node's kind and range are written.
-    pub fn write_debug<R>(&self, resolver: &R, target: &mut impl fmt::Write, recursive: bool) -> fmt::Result
-    where
-        R: Resolver<TokenKey, S::Data> + ?Sized,
-    {
+    pub fn write_debug(&self, target: &mut impl fmt::Write, recursive: bool) -> fmt::Result {
         if recursive {
             let mut level = 0;
             for event in self.preorder_with_tokens() {
@@ -52,7 +47,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
                         for _ in 0..level {
                             write!(target, "  ")?;
                         }
-                        element.write_debug(resolver, target, false)?;
+                        element.write_debug(target, false)?;
                         writeln!(target)?;
                         level += 1;
                     }
@@ -72,65 +67,44 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     ///
     /// To avoid allocating for every node, see [`write_debug`](SyntaxNode::write_debug).
     #[inline]
-    pub fn debug<R>(&self, resolver: &R, recursive: bool) -> String
-    where
-        R: Resolver<TokenKey, S::Data> + ?Sized,
-    {
+    pub fn debug(&self, recursive: bool) -> String {
         // NOTE: `fmt::Write` methods on `String` never fail
         let mut res = String::new();
-        self.write_debug(resolver, &mut res, recursive).unwrap();
+        self.write_debug(&mut res, recursive).unwrap();
         res
     }
 
     /// Writes this node's [`Display`](fmt::Display) representation into the given `target`.
-    pub fn write_display<R>(&self, resolver: &R, target: &mut impl fmt::Write) -> fmt::Result
-    where
-        R: Resolver<TokenKey, S::Data> + ?Sized,
-    {
+    pub fn write_display(&self, target: &mut impl fmt::Write) -> fmt::Result {
         self.preorder_with_tokens()
             .filter_map(|event| match event {
                 WalkEvent::Enter(NodeOrToken::Token(token)) => Some(token),
                 _ => None,
             })
-            .try_for_each(|it| it.write_display(resolver, target))
+            .try_for_each(|it| it.write_display(target))
     }
 
     /// Returns this node's [`Display`](fmt::Display) representation as a string.
     ///
     /// To avoid allocating for every node, see [`write_display`](SyntaxNode::write_display).
     #[inline]
-    pub fn display<R>(&self, resolver: &R) -> String
-    where
-        R: Resolver<TokenKey, S::Data> + ?Sized,
-    {
+    pub fn display(&self) -> String {
         // NOTE: `fmt::Write` methods on `String` never fail
         let mut res = String::new();
-        self.write_display(resolver, &mut res).unwrap();
+        self.write_display(&mut res).unwrap();
         res
     }
+}
 
-    /// If there is a resolver associated with this tree, returns it.
-    pub fn resolver(&self) -> Option<&AllocArc<dyn Resolver<TokenKey, S::Data>>> {
-        match &self.root().data().kind {
-            Kind::Root(_, resolver) => resolver.as_ref(),
-            _ => unreachable!(),
-        }
+impl<S: Syntax, D> fmt::Debug for SyntaxNode<S, D> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write_debug(f, f.alternate())
     }
+}
 
-    /// Turns this node into a [`ResolvedNode`], but only if there is a resolver associated with
-    /// this tree.
-    #[inline]
-    pub fn try_resolved(&self) -> Option<&ResolvedNode<S, D>> {
-        // safety: we only coerce if `resolver` exists
-        self.resolver().map(|_| unsafe { ResolvedNode::coerce_ref(self) })
-    }
-
-    /// Turns this node into a [`ResolvedNode`].
-    /// # Panics
-    /// If there is no resolver associated with this tree.
-    #[inline]
-    pub fn resolved(&self) -> &ResolvedNode<S, D> {
-        self.try_resolved().expect("tried to resolve a node without resolver")
+impl<S: Syntax, D> fmt::Display for SyntaxNode<S, D> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write_display(f)
     }
 }
 
@@ -138,7 +112,7 @@ impl<S: Syntax, D> Clone for SyntaxNode<S, D> {
     fn clone(&self) -> Self {
         // safety:: the ref count is only dropped when there are no more external references (see below)
         // since we are currently cloning such a reference, there is still at least one
-        let ref_count = unsafe { &mut *self.data().ref_count };
+        let ref_count = unsafe { &mut *self.node_data().ref_count };
         ref_count.fetch_add(1, Ordering::AcqRel);
         self.clone_uncounted()
     }
@@ -150,7 +124,7 @@ impl<S: Syntax, D> Drop for SyntaxNode<S, D> {
         // and all nodes but the root have been dropped.
         // if we are the last external reference, we have not yet dropped the ref count
         // if we aren't we won't enter the `if` below
-        let ref_count = unsafe { &*self.data().ref_count };
+        let ref_count = unsafe { &*self.node_data().ref_count };
         let refs = ref_count.fetch_sub(1, Ordering::AcqRel);
         if refs == 1 {
             // drop from parent
@@ -159,7 +133,7 @@ impl<S: Syntax, D> Drop for SyntaxNode<S, D> {
             // `ref_count`
             let root = self.root();
             let mut root = root.clone_uncounted();
-            let ref_count = root.data().ref_count;
+            let ref_count = root.node_data().ref_count;
             root.drop_recursive();
             let root_data = root.data;
             drop(root);
@@ -171,7 +145,7 @@ impl<S: Syntax, D> Drop for SyntaxNode<S, D> {
 
 impl<S: Syntax, D> SyntaxNode<S, D> {
     #[inline]
-    fn data(&self) -> &NodeData<S, D> {
+    fn node_data(&self) -> &NodeData<S, D> {
         unsafe { self.data.as_ref() }
     }
 
@@ -192,7 +166,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     }
 
     fn drop_recursive(&mut self) {
-        let data = self.data();
+        let data = self.node_data();
         for i in 0..data.children.len() {
             // safety: `child_locks` and `children` are pre-allocated to the same length
             let _write = unsafe { data.child_locks.get_unchecked(i).write() };
@@ -237,7 +211,7 @@ impl<S: Syntax, D> Hash for SyntaxNode<S, D> {
 }
 
 enum Kind<S: Syntax, D: 'static> {
-    Root(GreenNode, Option<AllocArc<dyn Resolver<TokenKey, S::Data>>>),
+    Root(GreenNode),
     Child {
         parent: SyntaxNode<S, D>,
         index: u32,
@@ -291,31 +265,31 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// # let mut builder: GreenNodeBuilder<MySyntax> = GreenNodeBuilder::new();
     /// # builder.start_node(Root);
     /// # builder.finish_node();
-    /// # let (green_root, _) = builder.finish();
+    /// # let green_root = builder.finish();
     /// let root: SyntaxNode<MySyntax> = SyntaxNode::new_root(green_root);
     /// assert_eq!(root.kind(), Root);
     /// ```
     #[inline]
     pub fn new_root(green: GreenNode) -> Self {
-        Self::make_new_root(green, None)
+        Self::make_new_root(green)
     }
 
     fn new(data: NonNull<NodeData<S, D>>) -> Self {
         Self { data }
     }
 
-    fn make_new_root(green: GreenNode, resolver: Option<AllocArc<dyn Resolver<TokenKey, S::Data>>>) -> Self {
+    fn make_new_root(green: GreenNode) -> Self {
         let ref_count = Box::new(AtomicU32::new(1));
         let n_children = green.children().count();
         let data = NodeData::new(
-            Kind::Root(green, resolver),
+            Kind::Root(green),
             NonNull::dangling(),
             Box::into_raw(ref_count),
             n_children,
         );
         let ret = Self::new(data);
-        let green: NonNull<GreenNode> = match &ret.data().kind {
-            Kind::Root(green, _resolver) => green.into(),
+        let green: NonNull<GreenNode> = match &ret.node_data().kind {
+            Kind::Root(green) => green.into(),
             _ => unreachable!(),
         };
         // safety: we have just created `ret` and have not shared it.
@@ -324,38 +298,6 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
         // the date once we have written it here.
         unsafe { ptr::addr_of_mut!((*ret.data.as_ptr()).green).write(green) };
         ret
-    }
-
-    /// Build a new syntax tree on top of a green tree and associate a resolver with the tree to
-    /// resolve interned Strings.
-    ///
-    /// # Example
-    /// ```
-    /// # use cstree::testing::*;
-    /// use cstree::syntax::ResolvedNode;
-    ///
-    /// let mut builder: GreenNodeBuilder<MySyntax> = GreenNodeBuilder::new();
-    /// builder.start_node(Root);
-    /// builder.token(Identifier, "content");
-    /// builder.finish_node();
-    /// let (green, cache) = builder.finish();
-    ///
-    /// // We are safe to use `unwrap` here because we created the builder with `new`.
-    /// // This created a new interner and cache for us owned by the builder,
-    /// // and `finish` always returns these.
-    /// let interner = cache.unwrap().into_interner().unwrap();
-    /// let root: ResolvedNode<MySyntax> = SyntaxNode::new_root_with_resolver(green, interner);
-    /// assert_eq!(root.text(), "content");
-    /// ```
-    #[inline]
-    pub fn new_root_with_resolver(
-        green: GreenNode,
-        resolver: impl Resolver<TokenKey, S::Data> + 'static,
-    ) -> ResolvedNode<S, D> {
-        let ptr: AllocArc<dyn Resolver<TokenKey, S::Data>> = AllocArc::new(resolver);
-        ResolvedNode {
-            syntax: SyntaxNode::make_new_root(green, Some(ptr)),
-        }
     }
 
     // Technically, unsafe, but private so that's OK.
@@ -384,7 +326,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// Stores custom data for this node.
     /// If there was previous data associated with this node, it will be replaced.
     pub fn set_data(&self, data: D) -> Arc<D> {
-        let mut ptr = self.data().data.write();
+        let mut ptr = self.node_data().data.write();
         let data = Arc::new(data);
         *ptr = Some(Arc::clone(&data));
         data
@@ -393,7 +335,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// Stores custom data for this node, but only if no data was previously set.
     /// If it was, the given data is returned unchanged.
     pub fn try_set_data(&self, data: D) -> Result<Arc<D>, D> {
-        let mut ptr = self.data().data.write();
+        let mut ptr = self.node_data().data.write();
         if ptr.is_some() {
             return Err(data);
         }
@@ -405,30 +347,30 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// Returns the data associated with this node, if any.
     #[allow(clippy::useless_asref)] // make `Arc::clone` explicit
     pub fn get_data(&self) -> Option<Arc<D>> {
-        let ptr = self.data().data.read();
+        let ptr = self.node_data().data.read();
         (*ptr).as_ref().map(Arc::clone)
     }
 
     /// Removes the data associated with this node.
     pub fn clear_data(&self) {
-        let mut ptr = self.data().data.write();
+        let mut ptr = self.node_data().data.write();
         *ptr = None;
     }
 
     #[inline]
     fn read(&self, index: usize) -> Option<SyntaxElementRef<'_, S, D>> {
         // safety: children are pre-allocated and indices are determined internally
-        let _read = unsafe { self.data().child_locks.get_unchecked(index).read() };
+        let _read = unsafe { self.node_data().child_locks.get_unchecked(index).read() };
         // safety: mutable accesses to the slot only occur below and have to take the lock
-        let slot = unsafe { &*self.data().children.get_unchecked(index).get() };
+        let slot = unsafe { &*self.node_data().children.get_unchecked(index).get() };
         slot.as_ref().map(|elem| elem.into())
     }
 
     fn try_write(&self, index: usize, elem: SyntaxElement<S, D>) {
         // safety: children are pre-allocated and indices are determined internally
-        let _write = unsafe { self.data().child_locks.get_unchecked(index).write() };
+        let _write = unsafe { self.node_data().child_locks.get_unchecked(index).write() };
         // safety: we are the only writer and there are no readers as evidenced by the write lock
-        let slot = unsafe { &mut *self.data().children.get_unchecked(index).get() };
+        let slot = unsafe { &mut *self.node_data().children.get_unchecked(index).get() };
         if slot.is_none() {
             // we are first to initialize the child
             *slot = Some(elem);
@@ -445,7 +387,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
                     //      the `ref_count`. Thus, we have to offset by 2 overall.
 
                     // safety: `node` was just created and has not been shared
-                    let ref_count = unsafe { &*node.data().ref_count };
+                    let ref_count = unsafe { &*node.node_data().ref_count };
                     ref_count.fetch_add(2, Ordering::AcqRel);
                     let node_data = node.data;
                     drop(node);
@@ -457,7 +399,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
                     // by one.
 
                     // safety: as above
-                    let ref_count = unsafe { &*token.parent().data().ref_count };
+                    let ref_count = unsafe { &*token.parent().node_data().ref_count };
                     ref_count.fetch_add(1, Ordering::AcqRel);
                     drop(token);
                 }
@@ -478,7 +420,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
         }
         self.try_write(
             index,
-            Self::new_child(node, self, index as u32, offset, self.data().ref_count).into(),
+            Self::new_child(node, self, index as u32, offset, self.node_data().ref_count).into(),
         );
         self.read(index).unwrap()
     }
@@ -496,7 +438,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
         }
         self.try_write(
             index,
-            SyntaxElement::new(element, self, index as u32, offset, self.data().ref_count),
+            SyntaxElement::new(element, self, index as u32, offset, self.node_data().ref_count),
         );
         self.read(index).unwrap()
     }
@@ -506,7 +448,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// of operation is proportional to the depth of the tree
     pub fn replace_with(&self, replacement: GreenNode) -> GreenNode {
         assert_eq!(self.syntax_kind(), replacement.kind());
-        match self.data().kind.as_child() {
+        match self.node_data().kind.as_child() {
             None => replacement, // `None` means `self` is the root
             Some((parent, me, _offset)) => {
                 let mut replacement = Some(replacement);
@@ -538,46 +480,36 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// The range this node covers in the source text, in bytes.
     #[inline]
     pub fn text_range(&self) -> TextRange {
-        let offset = match self.data().kind.as_child() {
+        let offset = match self.node_data().kind.as_child() {
             Some((_, _, it)) => it,
             _ => 0.into(),
         };
         TextRange::at(offset, self.green().text_len())
     }
 
-    /// Uses the provided resolver to return an efficient representation of all source text covered
-    /// by this node, i.e. the combined text of all token leafs of the subtree originating in this
-    /// node.
+    /// Returns an efficient representation of all source bytes covered by this node.
     #[inline]
-    pub fn resolve_data<'n, 'i, I>(&'n self, resolver: &'i I) -> SyntaxData<'n, 'i, I, S, D>
-    where
-        I: Resolver<TokenKey, S::Data> + ?Sized,
-    {
-        SyntaxData::new(self, resolver)
+    pub fn data(&self) -> SyntaxData<'_, S, D> {
+        SyntaxData::new(self)
     }
 
-    /// Uses the provided resolver to return an efficient representation of all source text covered
-    /// by this node.
+    /// Returns an efficient representation of all source text covered by this node, if it is valid UTF-8.
     #[inline]
-    pub fn resolve_text<'n, 'i, I>(&'n self, resolver: &'i I) -> SyntaxText<'n, 'i, I, S, D>
-    where
-        S: Syntax<Data = str>,
-        I: Resolver<TokenKey, str> + ?Sized,
-    {
-        SyntaxText::new(self, resolver)
+    pub fn text(&self) -> Option<SyntaxText<'_, S, D>> {
+        SyntaxText::new(self)
     }
 
     /// Returns the unterlying green tree node of this node.
     #[inline]
     pub fn green(&self) -> &GreenNode {
-        unsafe { self.data().green.as_ref() }
+        unsafe { self.node_data().green.as_ref() }
     }
 
     /// The parent node of this node, except if this node is the root.
     #[inline]
     pub fn parent(&self) -> Option<&SyntaxNode<S, D>> {
-        match &self.data().kind {
-            Kind::Root(_, _) => None,
+        match &self.node_data().kind {
+            Kind::Root(_) => None,
             Kind::Child { parent, .. } => Some(parent),
         }
     }
@@ -593,7 +525,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// The number of children of this node.
     #[inline]
     pub fn arity_with_tokens(&self) -> usize {
-        self.data().children.len()
+        self.node_data().children.len()
     }
 
     /// Returns an iterator along the chain of parents of this node.
@@ -700,7 +632,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// If you want to also consider leafs, see [`next_sibling_or_token`](SyntaxNode::next_sibling_or_token).
     #[inline]
     pub fn next_sibling(&self) -> Option<&SyntaxNode<S, D>> {
-        let (parent, index, _) = self.data().kind.as_child()?;
+        let (parent, index, _) = self.node_data().kind.as_child()?;
 
         let (node, (index, offset)) = filter_nodes(
             parent
@@ -714,7 +646,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// The tree element to the right of this one, i.e. the next child of this node's parent after this node.
     #[inline]
     pub fn next_sibling_or_token(&self) -> Option<SyntaxElementRef<'_, S, D>> {
-        let (parent, index, _) = self.data().kind.as_child()?;
+        let (parent, index, _) = self.node_data().kind.as_child()?;
 
         let (element, (index, offset)) = parent
             .green()
@@ -728,7 +660,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// If you want to also consider leafs, see [`prev_sibling_or_token`](SyntaxNode::prev_sibling_or_token).
     #[inline]
     pub fn prev_sibling(&self) -> Option<&SyntaxNode<S, D>> {
-        let (parent, index, _) = self.data().kind.as_child()?;
+        let (parent, index, _) = self.node_data().kind.as_child()?;
 
         let (node, (index, offset)) =
             filter_nodes(parent.green().children_to(index as usize, self.text_range().start())).next()?;
@@ -738,7 +670,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// The tree element to the left of this one, i.e. the previous child of this node's parent before this node.
     #[inline]
     pub fn prev_sibling_or_token(&self) -> Option<SyntaxElementRef<'_, S, D>> {
-        let (parent, index, _) = self.data().kind.as_child()?;
+        let (parent, index, _) = self.node_data().kind.as_child()?;
 
         let (element, (index, offset)) = parent
             .green()
@@ -924,25 +856,12 @@ impl<S, D> SyntaxNode<S, D>
 where
     S: Syntax,
 {
-    /// Return an anonymous object that can be used to serialize this node,
-    /// including the data and by using an external resolver.
-    pub fn as_serialize_with_data_with_resolver<'node>(
-        &'node self,
-        resolver: &'node impl Resolver<TokenKey, S::Data>,
-    ) -> impl serde::Serialize + 'node
+    /// Return an anonymous object that can be used to serialize this node including custom node data.
+    pub fn as_serialize_with_data<'node>(&'node self) -> impl serde::Serialize + 'node
     where
         D: serde::Serialize,
     {
-        SerializeWithData { node: self, resolver }
-    }
-
-    /// Return an anonymous object that can be used to serialize this node,
-    /// which uses the given resolver instead of the resolver inside the tree.
-    pub fn as_serialize_with_resolver<'node>(
-        &'node self,
-        resolver: &'node impl Resolver<TokenKey, S::Data>,
-    ) -> impl serde::Serialize + 'node {
-        SerializeWithResolver { node: self, resolver }
+        SerializeWithData { node: self }
     }
 }
 

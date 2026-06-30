@@ -2,8 +2,7 @@
 //!
 //! Inner [`SyntaxNode`]s represent only structural information, but can hold additional, user-defined data.
 //! Leaf [`SyntaxToken`]s represent individual pieces of source text.
-//! Use [`SyntaxNode::new_root`] and [`SyntaxNode::new_root_with_resolver`] to construct a syntax
-//! tree on top of a green tree.
+//! Use [`SyntaxNode::new_root`] to construct a syntax tree on top of a green tree.
 
 mod element;
 pub use element::{SyntaxElement, SyntaxElementRef};
@@ -11,8 +10,6 @@ mod node;
 pub use node::SyntaxNode;
 mod token;
 pub use token::SyntaxToken;
-mod resolved;
-pub use resolved::{ResolvedElement, ResolvedElementRef, ResolvedNode, ResolvedToken};
 mod iter;
 pub use iter::{SyntaxElementChildren, SyntaxNodeChildren};
 
@@ -47,11 +44,6 @@ mod tests {
         f::<SyntaxToken<TestSyntaxKind>>();
         f::<SyntaxElement<TestSyntaxKind>>();
         f::<SyntaxElementRef<'static, TestSyntaxKind>>();
-
-        f::<ResolvedNode<TestSyntaxKind>>();
-        f::<ResolvedToken<TestSyntaxKind>>();
-        f::<ResolvedElement<TestSyntaxKind>>();
-        f::<ResolvedElementRef<'static, TestSyntaxKind>>();
     }
 
     #[test]

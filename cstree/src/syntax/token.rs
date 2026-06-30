@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use alloc::{string::String, sync::Arc as AllocArc};
+use alloc::string::String;
 use core::{
     fmt,
     hash::{Hash, Hasher},
@@ -13,12 +13,10 @@ use super::*;
 use crate::{
     RawSyntaxKind, Syntax,
     green::{GreenNode, GreenToken},
-    interning::{Resolver, TokenData, TokenKey},
     traversal::Direction,
 };
 
 /// Syntax tree token.
-#[derive(Debug)]
 pub struct SyntaxToken<S: Syntax, D: 'static = ()> {
     parent: SyntaxNode<S, D>,
     index: u32,
@@ -53,71 +51,49 @@ impl<S: Syntax, D> Eq for SyntaxToken<S, D> {}
 
 impl<S: Syntax, D> SyntaxToken<S, D> {
     /// Writes this token's [`Debug`](fmt::Debug) representation into the given `target`.
-    pub fn write_debug<R>(&self, resolver: &R, target: &mut impl fmt::Write) -> fmt::Result
-    where
-        R: Resolver<TokenKey, S::Data> + ?Sized,
-    {
+    pub fn write_debug(&self, target: &mut impl fmt::Write) -> fmt::Result {
         write!(target, "{:?}@{:?}", self.kind(), self.text_range())?;
         write!(target, " ")?;
-        self.resolve_data(resolver).fmt_debug(target)
+        fmt_data_debug(self.data(), target)
     }
 
     /// Returns this token's [`Debug`](fmt::Debug) representation as a string.
     ///
     /// To avoid allocating for every token, see [`write_debug`](SyntaxToken::write_debug).
     #[inline]
-    pub fn debug<R>(&self, resolver: &R) -> String
-    where
-        R: Resolver<TokenKey, S::Data> + ?Sized,
-    {
+    pub fn debug(&self) -> String {
         // NOTE: `fmt::Write` methods on `String` never fail
         let mut res = String::new();
-        self.write_debug(resolver, &mut res).unwrap();
+        self.write_debug(&mut res).unwrap();
         res
     }
 
     /// Writes this token's [`Display`](fmt::Display) representation into the given `target`.
     #[inline]
-    pub fn write_display<R>(&self, resolver: &R, target: &mut impl fmt::Write) -> fmt::Result
-    where
-        R: Resolver<TokenKey, S::Data> + ?Sized,
-    {
-        self.resolve_data(resolver).fmt_display(target)
+    pub fn write_display(&self, target: &mut impl fmt::Write) -> fmt::Result {
+        fmt_data_display(self.data(), target)
     }
 
     /// Returns this token's [`Display`](fmt::Display) representation as a string.
     ///
     /// To avoid allocating for every token, see [`write_display`](SyntaxToken::write_display).
     #[inline]
-    pub fn display<R>(&self, resolver: &R) -> String
-    where
-        R: Resolver<TokenKey, S::Data> + ?Sized,
-    {
+    pub fn display(&self) -> String {
         let mut res = String::new();
-        self.write_display(resolver, &mut res).unwrap();
+        self.write_display(&mut res).unwrap();
         res
     }
+}
 
-    /// If there is a resolver associated with this tree, returns it.
-    #[inline]
-    pub fn resolver(&self) -> Option<&AllocArc<dyn Resolver<TokenKey, S::Data>>> {
-        self.parent.resolver()
+impl<S: Syntax, D> fmt::Debug for SyntaxToken<S, D> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write_debug(f)
     }
+}
 
-    /// Turns this token into a [`ResolvedToken`], but only if there is a resolver
-    /// associated with this tree.
-    #[inline]
-    pub fn try_resolved(&self) -> Option<&ResolvedToken<S, D>> {
-        // safety: we only coerce if `resolver` exists
-        self.resolver().map(|_| unsafe { ResolvedToken::coerce_ref(self) })
-    }
-
-    /// Turns this token into a [`ResolvedToken`].
-    /// # Panics
-    /// If there is no resolver associated with this tree.
-    #[inline]
-    pub fn resolved(&self) -> &ResolvedToken<S, D> {
-        self.try_resolved().expect("tried to resolve a node without resolver")
+impl<S: Syntax, D> fmt::Display for SyntaxToken<S, D> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write_display(f)
     }
 }
 
@@ -168,32 +144,21 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
         TextRange::at(self.offset, self.green().text_len())
     }
 
-    /// Uses the provided resolver to return the source data of this token.
-    ///
-    /// If no data is explicitly associated with the token, returns its [`static_data`](SyntaxToken::static_data)
-    /// instead.
+    /// Returns the source bytes of this token.
     #[inline]
-    pub fn resolve_data<'i, I>(&self, resolver: &'i I) -> &'i S::Data
-    where
-        I: Resolver<TokenKey, S::Data> + ?Sized,
-    {
-        // one of the two must be present upon construction
-        self.static_data().or_else(|| self.green().data(resolver)).unwrap()
+    pub fn data(&self) -> &[u8] {
+        self.green().data()
     }
 
-    /// Uses the provided resolver to return the source text of this token.
+    /// Returns the source text of this token, if it is valid UTF-8.
     #[inline]
-    pub fn resolve_text<'i, I>(&self, resolver: &'i I) -> &'i str
-    where
-        S: Syntax<Data = str>,
-        I: Resolver<TokenKey, str> + ?Sized,
-    {
-        self.resolve_data(resolver)
+    pub fn text(&self) -> Option<&str> {
+        self.green().text()
     }
 
     /// If the [syntax kind](Syntax) of this token always represents the same data, returns that data.
     #[inline(always)]
-    pub fn static_data(&self) -> Option<&'static S::Data> {
+    pub fn static_data(&self) -> Option<&'static [u8]> {
         S::static_data(self.kind())
     }
 
@@ -216,7 +181,7 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     /// # builder.token(Int, "3");
     /// # builder.finish_node();
     /// let tree = parse(&mut builder, "x + 3");
-    /// # let tree: SyntaxNode<MySyntax> = SyntaxNode::new_root(builder.finish().0);
+    /// # let tree: SyntaxNode<MySyntax> = SyntaxNode::new_root(builder.finish());
     /// let plus = tree
     ///     .children_with_tokens()
     ///     .nth(2) // `x`, then a space, then `+`
@@ -226,24 +191,15 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     /// assert_eq!(plus.static_text(), Some("+"));
     /// ```
     #[inline(always)]
-    pub fn static_text(&self) -> Option<&'static str>
-    where
-        S: Syntax<Data = str>,
-    {
-        self.static_data()
+    pub fn static_text(&self) -> Option<&'static str> {
+        self.kind().static_text()
     }
 
     /// Returns `true` if `self` and `other` represent equal source text.
     ///
     /// This method is different from the `PartialEq` and `Eq` implementations in that it compares
     /// only the token text and not its source position.
-    /// It is more efficient than comparing the result of
-    /// [`resolve_text`](SyntaxToken::resolve_text) because it compares the tokens' interned
-    /// [`text_key`s](SyntaxToken::text_key) (if their text is not static) or their kind (if it is).
-    /// Therefore, it also does not require a [`Resolver`].
-    ///
-    /// **Note** that the result of the comparison may be wrong when comparing two tokens from
-    /// different trees that use different interners.
+    /// It compares the token bytes directly and does not consider source position.
     ///
     /// # Examples
     /// ```
@@ -260,7 +216,7 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     /// # builder.token(Int, "3");
     /// # builder.finish_node();
     /// let tree = parse(&mut builder, "x + x + 3");
-    /// # let tree: SyntaxNode<MySyntax> = SyntaxNode::new_root(builder.finish().0);
+    /// # let tree: SyntaxNode<MySyntax> = SyntaxNode::new_root(builder.finish());
     /// let mut tokens = tree.children_with_tokens();
     /// let tokens = tokens.by_ref();
     /// let first_x = tokens.next().unwrap().into_token().unwrap();
@@ -274,80 +230,13 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     /// ```
     #[inline]
     pub fn data_eq(&self, other: &Self) -> bool {
-        if let Some(k1) = self.green().data_key() {
-            match other.green().data_key() {
-                Some(k2) => return k1 == k2,
-                None => return false, // a kind with static data cannot be equal to one with non-static data
-            }
-        }
-
-        debug_assert!(self.static_data().is_some());
-        debug_assert!(other.static_data().is_some());
-        self.syntax_kind() == other.syntax_kind()
+        self.data() == other.data()
     }
 
     /// Returns `true` if `self` and `other` represent equal source text.
     #[inline]
     pub fn text_eq(&self, other: &Self) -> bool {
         self.data_eq(other)
-    }
-
-    /// Returns the interned key of text covered by this token, if any.
-    /// This key may be used for comparisons with other keys of strings interned by the same interner.
-    ///
-    /// See also [`resolve_text`](SyntaxToken::resolve_text) and [`text_eq`](SyntaxToken::text_eq).
-    ///
-    /// # Examples
-    /// If you intern strings inside of your application, like inside a compiler, you can use
-    /// token's text keys to cross-reference between the syntax tree and the rest of your
-    /// implementation by re-using the interner in both.
-    /// ```
-    /// # use cstree::testing::*;
-    /// use cstree::interning::{TokenInterner, TokenKey, new_interner};
-    /// struct TypeTable {
-    ///     // ...
-    /// }
-    /// impl TypeTable {
-    ///     fn type_of(&self, ident: TokenKey) -> &str {
-    ///         // ...
-    /// #     ""
-    ///     }
-    /// }
-    /// # struct State {
-    /// #   interner: TokenInterner,
-    /// #   type_table: TypeTable,
-    /// # }
-    /// let interner = new_interner();
-    /// let mut state = State {
-    ///     interner,
-    ///     type_table: TypeTable{ /* stuff */},
-    /// };
-    /// let mut builder: GreenNodeBuilder<MySyntax, TokenInterner> =
-    ///     GreenNodeBuilder::with_interner(&mut state.interner);
-    /// # let input = "";
-    /// # builder.start_node(Root);
-    /// # builder.token(Identifier, "x");
-    /// # builder.finish_node();
-    /// let tree = parse(&mut builder, "x");
-    /// # let tree: SyntaxNode<MySyntax> = SyntaxNode::new_root(builder.finish().0);
-    /// let type_table = &state.type_table;
-    /// let ident = tree
-    ///     .children_with_tokens()
-    ///     .next()
-    ///     .unwrap()
-    ///     .into_token()
-    ///     .unwrap();
-    /// let typ = type_table.type_of(ident.text_key().unwrap());
-    /// ```
-    #[inline]
-    pub fn data_key(&self) -> Option<TokenKey> {
-        self.green().data_key()
-    }
-
-    /// Returns the interned key of text covered by this token, if any.
-    #[inline]
-    pub fn text_key(&self) -> Option<TokenKey> {
-        self.data_key()
     }
 
     /// Returns the unterlying green tree token of this token.
@@ -426,5 +315,27 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
                 .find_map(|it| it.prev_sibling_or_token())
                 .and_then(|element| element.last_token()),
         }
+    }
+}
+
+fn fmt_data_debug<W: fmt::Write + ?Sized>(bytes: &[u8], f: &mut W) -> fmt::Result {
+    if let Ok(text) = core::str::from_utf8(bytes) {
+        write!(f, "{text:?}")
+    } else if bytes.len() < 25 {
+        write!(f, "{bytes:?}")
+    } else {
+        write!(f, "{:?}", &&bytes[..24])?;
+        f.write_str(" ...")
+    }
+}
+
+fn fmt_data_display<W: fmt::Write + ?Sized>(bytes: &[u8], f: &mut W) -> fmt::Result {
+    if let Ok(text) = core::str::from_utf8(bytes) {
+        f.write_str(text)
+    } else if bytes.len() < 25 {
+        write!(f, "{bytes:?}")
+    } else {
+        write!(f, "{:?}", &&bytes[..24])?;
+        f.write_str(" ...")
     }
 }

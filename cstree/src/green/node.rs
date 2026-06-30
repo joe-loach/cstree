@@ -103,19 +103,6 @@ impl GreenNode {
         }
     }
 
-    #[inline]
-    pub(super) fn from_head_and_children<I>(header: GreenNodeHead, children: I) -> GreenNode
-    where
-        I: IntoIterator<Item = GreenElement>,
-        I::IntoIter: ExactSizeIterator,
-    {
-        let children = children.into_iter().map(PackedGreenElement::from);
-        let header = HeaderWithLength::new(header, children.len());
-        GreenNode {
-            data: Arc::into_thin(Arc::from_header_and_iter(header, children)),
-        }
-    }
-
     /// [`RawSyntaxKind`] of this node.
     #[inline]
     pub fn kind(&self) -> RawSyntaxKind {

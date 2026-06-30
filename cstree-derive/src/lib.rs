@@ -26,7 +26,7 @@ mod symbols;
 
 use symbols::*;
 
-#[proc_macro_derive(Syntax, attributes(static_text, static_data, syntax))]
+#[proc_macro_derive(Syntax, attributes(static_text, static_data))]
 pub fn language(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     expand_syntax(ast).unwrap_or_else(to_compile_errors).into()
@@ -50,17 +50,15 @@ fn expand_syntax(ast: DeriveInput) -> Result<TokenStream, Vec<syn::Error>> {
     error_handler.check()?;
 
     let name = &syntax_kind_enum.name;
-    let data_type = syntax_kind_enum
-        .data
-        .as_ref()
-        .map(|ty| quote!(#ty))
-        .unwrap_or_else(|| quote!(str));
     let variant_count = syntax_kind_enum.variants.len() as u32;
     let static_data = syntax_kind_enum.variants.iter().map(|variant| {
         let variant_name = &variant.name;
-        let static_data = match (&variant.static_data, variant.static_text.as_deref()) {
+        let static_data = match (&variant.static_data, &variant.static_text) {
             (Some(data), _) => quote!(::core::option::Option::Some(#data)),
-            (None, Some(text)) => quote!(::core::option::Option::Some(#text)),
+            (None, Some(text)) => {
+                let bytes = syn::LitByteStr::new(text.as_bytes(), variant.source.span());
+                quote!(::core::option::Option::Some(#bytes))
+            }
             (None, None) => quote!(::core::option::Option::None),
         };
         quote_spanned!(variant.source.span()=>
@@ -70,8 +68,6 @@ fn expand_syntax(ast: DeriveInput) -> Result<TokenStream, Vec<syn::Error>> {
     let trait_impl = quote_spanned! { syntax_kind_enum.source.span()=>
         #[automatically_derived]
         impl ::cstree::Syntax for #name {
-            type Data = #data_type;
-
             fn from_raw(raw: ::cstree::RawSyntaxKind) -> Self {
                 assert!(raw.0 < #variant_count, "Invalid raw syntax kind: {}", raw.0);
                 // Safety: discriminant is valid by the assert above
@@ -82,7 +78,7 @@ fn expand_syntax(ast: DeriveInput) -> Result<TokenStream, Vec<syn::Error>> {
                 ::cstree::RawSyntaxKind(self as u32)
             }
 
-            fn static_data(self) -> ::core::option::Option<&'static Self::Data> {
+            fn static_data(self) -> ::core::option::Option<&'static [u8]> {
                 match self {
                     #( #static_data )*
                 }

@@ -39,9 +39,8 @@
 //!   atomically reference counting syntax trees as a whole, which also gets rid of the need to reference count
 //!   individual nodes.
 //! - [`SyntaxNode`](syntax::SyntaxNode)s can hold custom data.
-//! - `cstree` trees are trees over interned strings. This means `cstree` will deduplicate the text of tokens with the
-//!   same source string, such as identifiers with the same name. In this position, `rowan` stores each token's text
-//!   together with its metadata as a custom DST (dynamically-sized type).
+//! - `cstree` trees store token bytes inline with green tokens, similar to `rowan`, instead of relying on an external
+//!   interner to resolve token text.
 //! - `cstree` includes some performance optimizations for tree creation: it only allocates space for new nodes on the
 //!   heap if they are not in cache and avoids recursively hashing subtrees by pre-hashing them.
 //! - `cstree` includes some performance optimizations for tree traversal: persisting red nodes allows tree traversal
@@ -59,13 +58,6 @@
 //! - `std` (enabled by default) - Support for standard library features
 //! - `derive` - Adds support for deriving the `Syntax` trait
 //! - `serialize` - Implements `serde::{De,}Serialize` for CSTs
-//! - `lasso` - Allows using interners from the `lasso` crate for green trees.
-//!   - When enabled, `cstree`'s default interners will use `lasso` internally, too.
-//! - `multi_threaded_interning` - Additionally provide threadsafe interner types.
-//!   - Where applicable (and if the corresponding features are selected), enabling this feature will also make `cstree`
-//!     provide compatibility implementations for multi-threaded interners from other crates.
-//!   - Enabling this feature will automatically enable the `lasso` feature, as the multi-threaded interners are backed
-//!     by `lasso`.
 //!
 //! ## Getting Started
 //! If you're looking at `cstree`, you're probably looking at or already writing a parser and are considering using
@@ -79,9 +71,8 @@
 //!     [`start_node`](build::GreenNodeBuilder::start_node), [`token`](build::GreenNodeBuilder::token) and
 //!     [`finish_node`](build::GreenNodeBuilder::finish_node) from your parser
 //!
-//!  3. Call [`SyntaxNode::new_root`](syntax::SyntaxNode::new_root) or
-//!     [`SyntaxNode::new_root_with_resolver`](syntax::SyntaxNode::new_root_with_resolver) with the resulting
-//!     [`GreenNode`](green::GreenNode) to obtain a syntax tree that you can traverse
+//!  3. Call [`SyntaxNode::new_root`](syntax::SyntaxNode::new_root) with the resulting [`GreenNode`](green::GreenNode)
+//!     to obtain a syntax tree that you can traverse
 //!
 //! There's a full [getting started guide] that walks through each of the above steps in detail in the documentation for
 //! the `getting_started` module. The walkthrough goes through the necessary steps bit by bit and skips the lexer, but
@@ -105,7 +96,7 @@
 #![allow(
     unstable_name_collisions, // strict provenance - must come after `future_incompatible` to take precedence
     unexpected_cfgs, // nightly docs.rs features and `salsa-2022` feature until that is figured out
-    clippy::duplicated_attributes, // interning modules
+    clippy::duplicated_attributes,
 )]
 #![warn(missing_docs)]
 // Docs.rs
@@ -119,9 +110,6 @@ pub mod getting_started;
 pub mod green;
 #[allow(unsafe_code)]
 pub mod syntax;
-
-#[allow(unsafe_code)]
-pub mod interning;
 
 #[cfg(feature = "serialize")]
 mod serde_impls;
@@ -146,7 +134,7 @@ pub mod text {
 /// section](../index.html#getting-started) from the top-level documentation for an introduction to how to build a
 /// syntax tree.
 pub mod build {
-    pub use crate::green::builder::{Checkpoint, GreenNodeBuilder, NodeCache};
+    pub use crate::green::builder::{Checkpoint, GreenNodeBuilder};
 }
 
 /// A convenient collection of the most used parts of `cstree`.
@@ -210,19 +198,16 @@ pub mod sync {
 ///
 /// [`SyntaxNode`]: crate::syntax::SyntaxNode
 pub trait Syntax: Sized + Copy + fmt::Debug + Eq {
-    /// Token payload type stored by this language.
-    type Data: interning::TokenData + ?Sized;
-
     /// Construct a semantic item kind from the compact representation.
     fn from_raw(raw: RawSyntaxKind) -> Self;
 
     /// Convert a semantic item kind into a more compact representation.
     fn into_raw(self) -> RawSyntaxKind;
 
-    /// Fixed data for a particular syntax kind.
+    /// Fixed bytes for a particular syntax kind.
     ///
-    /// Implement for kinds that will only ever represent the same token data.
-    fn static_data(self) -> Option<&'static Self::Data> {
+    /// Implement for kinds that will only ever represent the same token bytes.
+    fn static_data(self) -> Option<&'static [u8]> {
         None
     }
 
@@ -233,11 +218,8 @@ pub trait Syntax: Sized + Copy + fmt::Debug + Eq {
     /// Indicating tokens that have a `static_text` this way allows `cstree` to store them more efficiently, which makes
     /// it faster to add them to a syntax tree and to look up their text. Since there can often be many occurrences
     /// of these tokens inside a file, doing so will improve the performance of using `cstree`.
-    fn static_text(self) -> Option<&'static str>
-    where
-        Self: Syntax<Data = str>,
-    {
-        self.static_data()
+    fn static_text(self) -> Option<&'static str> {
+        self.static_data().and_then(|data| core::str::from_utf8(data).ok())
     }
 }
 
@@ -257,7 +239,7 @@ pub use cstree_derive::Syntax;
 #[allow(unsafe_code, unused)]
 pub mod testing {
     pub use crate::prelude::*;
-    pub fn parse<S: Syntax, I>(_b: &mut GreenNodeBuilder<S, I>, _s: &str) {}
+    pub fn parse<S: Syntax>(_b: &mut GreenNodeBuilder<S>, _s: &str) {}
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[repr(u32)]
@@ -276,8 +258,6 @@ pub mod testing {
     pub use TestSyntaxKind::*;
 
     impl Syntax for TestSyntaxKind {
-        type Data = str;
-
         fn from_raw(raw: RawSyntaxKind) -> Self {
             assert!(raw.0 <= TestSyntaxKind::__LAST as u32);
             unsafe { core::mem::transmute::<u32, Self>(raw.0) }
@@ -287,9 +267,9 @@ pub mod testing {
             RawSyntaxKind(self as u32)
         }
 
-        fn static_data(self) -> Option<&'static Self::Data> {
+        fn static_data(self) -> Option<&'static [u8]> {
             match self {
-                TestSyntaxKind::Plus => Some("+"),
+                TestSyntaxKind::Plus => Some(b"+"),
                 _ => None,
             }
         }

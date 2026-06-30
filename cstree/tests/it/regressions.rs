@@ -15,7 +15,7 @@ fn empty_tree_arc() {
     let mut builder: GreenNodeBuilder<SyntaxKind> = GreenNodeBuilder::new();
     builder.start_node(SyntaxKind::Root);
     builder.finish_node();
-    let (green, _) = builder.finish();
+    let green = builder.finish();
     let root: SyntaxNode<SyntaxKind> = SyntaxNode::new_root(green);
     assert_eq!(root.kind(), SyntaxKind::Root);
 }

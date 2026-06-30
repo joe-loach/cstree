@@ -9,7 +9,6 @@ use super::*;
 use crate::{
     RawSyntaxKind, Syntax,
     green::GreenElementRef,
-    interning::{Resolver, TokenKey},
     util::{NodeOrToken, TokenAtOffset},
 };
 
@@ -32,24 +31,18 @@ impl<S: Syntax, D> SyntaxElement<S, D> {
     /// Returns this element's [`Display`](fmt::Display) representation as a string.
     ///
     /// To avoid allocating for every element, see [`write_display`](type.SyntaxElement.html#method.write_display).
-    pub fn display<R>(&self, resolver: &R) -> String
-    where
-        R: Resolver<TokenKey, S::Data> + ?Sized,
-    {
+    pub fn display(&self) -> String {
         match self {
-            NodeOrToken::Node(it) => it.display(resolver),
-            NodeOrToken::Token(it) => it.display(resolver),
+            NodeOrToken::Node(it) => it.display(),
+            NodeOrToken::Token(it) => it.display(),
         }
     }
 
     /// Writes this element's [`Display`](fmt::Display) representation into the given `target`.
-    pub fn write_display<R>(&self, resolver: &R, target: &mut impl fmt::Write) -> fmt::Result
-    where
-        R: Resolver<TokenKey, S::Data> + ?Sized,
-    {
+    pub fn write_display(&self, target: &mut impl fmt::Write) -> fmt::Result {
         match self {
-            NodeOrToken::Node(it) => it.write_display(resolver, target),
-            NodeOrToken::Token(it) => it.write_display(resolver, target),
+            NodeOrToken::Node(it) => it.write_display(target),
+            NodeOrToken::Token(it) => it.write_display(target),
         }
     }
 
@@ -58,26 +51,20 @@ impl<S: Syntax, D> SyntaxElement<S, D> {
     /// Otherwise, only this element's kind and range are written.
     ///
     /// To avoid allocating for every element, see [`write_debug`](type.SyntaxElement.html#method.write_debug).
-    pub fn debug<R>(&self, resolver: &R, recursive: bool) -> String
-    where
-        R: Resolver<TokenKey, S::Data> + ?Sized,
-    {
+    pub fn debug(&self, recursive: bool) -> String {
         match self {
-            NodeOrToken::Node(it) => it.debug(resolver, recursive),
-            NodeOrToken::Token(it) => it.debug(resolver),
+            NodeOrToken::Node(it) => it.debug(recursive),
+            NodeOrToken::Token(it) => it.debug(),
         }
     }
 
     /// Writes this element's [`Debug`](fmt::Debug) representation into the given `target`.
     /// If `recursive` is `true`, prints the entire subtree rooted in this element.
     /// Otherwise, only this element's kind and range are written.
-    pub fn write_debug<R>(&self, resolver: &R, target: &mut impl fmt::Write, recursive: bool) -> fmt::Result
-    where
-        R: Resolver<TokenKey, S::Data> + ?Sized,
-    {
+    pub fn write_debug(&self, target: &mut impl fmt::Write, recursive: bool) -> fmt::Result {
         match self {
-            NodeOrToken::Node(it) => it.write_debug(resolver, target, recursive),
-            NodeOrToken::Token(it) => it.write_debug(resolver, target),
+            NodeOrToken::Node(it) => it.write_debug(target, recursive),
+            NodeOrToken::Token(it) => it.write_debug(target),
         }
     }
 }
@@ -110,24 +97,18 @@ impl<S: Syntax, D> SyntaxElementRef<'_, S, D> {
     /// Returns this element's [`Display`](fmt::Display) representation as a string.
     ///
     /// To avoid allocating for every element, see [`write_display`](type.SyntaxElementRef.html#method.write_display).
-    pub fn display<R>(&self, resolver: &R) -> String
-    where
-        R: Resolver<TokenKey, S::Data> + ?Sized,
-    {
+    pub fn display(&self) -> String {
         match self {
-            NodeOrToken::Node(it) => it.display(resolver),
-            NodeOrToken::Token(it) => it.display(resolver),
+            NodeOrToken::Node(it) => it.display(),
+            NodeOrToken::Token(it) => it.display(),
         }
     }
 
     /// Writes this element's [`Display`](fmt::Display) representation into the given `target`.
-    pub fn write_display<R>(&self, resolver: &R, target: &mut impl fmt::Write) -> fmt::Result
-    where
-        R: Resolver<TokenKey, S::Data> + ?Sized,
-    {
+    pub fn write_display(&self, target: &mut impl fmt::Write) -> fmt::Result {
         match self {
-            NodeOrToken::Node(it) => it.write_display(resolver, target),
-            NodeOrToken::Token(it) => it.write_display(resolver, target),
+            NodeOrToken::Node(it) => it.write_display(target),
+            NodeOrToken::Token(it) => it.write_display(target),
         }
     }
 
@@ -136,26 +117,20 @@ impl<S: Syntax, D> SyntaxElementRef<'_, S, D> {
     /// Otherwise, only this element's kind and range are written.
     ///
     /// To avoid allocating for every element, see [`write_debug`](type.SyntaxElementRef.html#method.write_debug).
-    pub fn debug<R>(&self, resolver: &R, recursive: bool) -> String
-    where
-        R: Resolver<TokenKey, S::Data> + ?Sized,
-    {
+    pub fn debug(&self, recursive: bool) -> String {
         match self {
-            NodeOrToken::Node(it) => it.debug(resolver, recursive),
-            NodeOrToken::Token(it) => it.debug(resolver),
+            NodeOrToken::Node(it) => it.debug(recursive),
+            NodeOrToken::Token(it) => it.debug(),
         }
     }
 
     /// Writes this element's [`Debug`](fmt::Debug) representation into the given `target`.
     /// If `recursive` is `true`, prints the entire subtree rooted in this element.
     /// Otherwise, only this element's kind and range are written.
-    pub fn write_debug<R>(&self, resolver: &R, target: &mut impl fmt::Write, recursive: bool) -> fmt::Result
-    where
-        R: Resolver<TokenKey, S::Data> + ?Sized,
-    {
+    pub fn write_debug(&self, target: &mut impl fmt::Write, recursive: bool) -> fmt::Result {
         match self {
-            NodeOrToken::Node(it) => it.write_debug(resolver, target, recursive),
-            NodeOrToken::Token(it) => it.write_debug(resolver, target),
+            NodeOrToken::Node(it) => it.write_debug(target, recursive),
+            NodeOrToken::Token(it) => it.write_debug(target),
         }
     }
 }

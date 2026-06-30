@@ -194,8 +194,6 @@ mod tests {
     struct DummyKind;
 
     impl Syntax for DummyKind {
-        type Data = str;
-
         fn from_raw(_: crate::RawSyntaxKind) -> Self {
             unreachable!()
         }
@@ -204,7 +202,7 @@ mod tests {
             unreachable!()
         }
 
-        fn static_data(self) -> Option<&'static Self::Data> {
+        fn static_data(self) -> Option<&'static [u8]> {
             unreachable!()
         }
     }

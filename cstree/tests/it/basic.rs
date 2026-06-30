@@ -1,16 +1,8 @@
 use super::*;
-use cstree::{
-    RawSyntaxKind,
-    build::{GreenNodeBuilder, NodeCache},
-    interning::{Resolver, new_interner},
-    text::TextRange,
-};
+use cstree::{RawSyntaxKind, build::GreenNodeBuilder, text::TextRange};
 
-fn build_tree<D>(root: &Element<'_>) -> (SyntaxNode<D>, impl Resolver + use<D>) {
-    let mut builder: GreenNodeBuilder<SyntaxKind> = GreenNodeBuilder::new();
-    build_recursive(root, &mut builder, 0);
-    let (node, cache) = builder.finish();
-    (SyntaxNode::new_root(node), cache.unwrap().into_interner().unwrap())
+fn build_syntax_tree<D>(root: &Element<'_>) -> SyntaxNode<D> {
+    SyntaxNode::new_root(build_tree(root))
 }
 
 fn two_level_tree() -> Element<'static> {
@@ -34,7 +26,7 @@ fn tree_with_eq_tokens() -> Element<'static> {
 #[test]
 fn create() {
     let tree = two_level_tree();
-    let (tree, resolver) = build_tree::<()>(&tree);
+    let tree = build_syntax_tree::<()>(&tree);
     assert_eq!(tree.syntax_kind(), RawSyntaxKind(0));
     assert_eq!(tree.kind(), SyntaxKind(0));
     {
@@ -42,7 +34,7 @@ fn create() {
         let leaf1_0 = leaf1_0.into_token().unwrap();
         assert_eq!(leaf1_0.syntax_kind(), RawSyntaxKind(5));
         assert_eq!(leaf1_0.kind(), SyntaxKind(5));
-        assert_eq!(leaf1_0.resolve_text(&resolver), "1.0");
+        assert_eq!(leaf1_0.text(), Some("1.0"));
         assert_eq!(leaf1_0.text_range(), TextRange::at(6.into(), 3.into()));
     }
     {
@@ -50,14 +42,14 @@ fn create() {
         assert_eq!(node2.syntax_kind(), RawSyntaxKind(6));
         assert_eq!(node2.kind(), SyntaxKind(6));
         assert_eq!(node2.children_with_tokens().count(), 3);
-        assert_eq!(node2.resolve_text(&resolver), "2.02.12.2");
+        assert_eq!(node2.text().unwrap(), "2.02.12.2");
     }
 }
 
 #[test]
 fn token_text_eq() {
     let tree = tree_with_eq_tokens();
-    let (tree, _) = build_tree::<()>(&tree);
+    let tree = build_syntax_tree::<()>(&tree);
     assert_eq!(tree.kind(), SyntaxKind(0));
 
     let leaf0_0 = tree.children().next().unwrap().children_with_tokens().next().unwrap();
@@ -86,7 +78,7 @@ fn token_text_eq() {
 #[test]
 fn data() {
     let tree = two_level_tree();
-    let (tree, _resolver) = build_tree::<String>(&tree);
+    let tree = build_syntax_tree::<String>(&tree);
     {
         let node2 = tree.children().nth(2).unwrap();
         assert_eq!(*node2.try_set_data("data".into()).unwrap(), "data");
@@ -118,46 +110,21 @@ fn data() {
 }
 
 #[test]
-fn with_interner() {
-    let mut interner = new_interner();
-    let mut cache = NodeCache::with_interner(&mut interner);
+fn inline_text() {
     let tree = two_level_tree();
-    let tree = build_tree_with_cache(&tree, &mut cache);
-    let tree: SyntaxNode = SyntaxNode::new_root(tree);
-    let resolver = interner;
+    let tree: SyntaxNode = SyntaxNode::new_root(build_tree(&tree));
     {
         let leaf1_0 = tree.children().nth(1).unwrap().children_with_tokens().next().unwrap();
         let leaf1_0 = leaf1_0.into_token().unwrap();
-        assert_eq!(leaf1_0.resolve_text(&resolver), "1.0");
+        assert_eq!(leaf1_0.text(), Some("1.0"));
         assert_eq!(leaf1_0.text_range(), TextRange::at(6.into(), 3.into()));
-    }
-    {
-        let node2 = tree.children().nth(2).unwrap();
-        assert_eq!(node2.resolve_text(&resolver), "2.02.12.2");
-    }
-}
-
-#[test]
-fn inline_resolver() {
-    let mut interner = new_interner();
-    let mut cache = NodeCache::with_interner(&mut interner);
-    let tree = two_level_tree();
-    let tree = build_tree_with_cache(&tree, &mut cache);
-    let tree: ResolvedNode = SyntaxNode::new_root_with_resolver(tree, interner);
-    {
-        let leaf1_0 = tree.children().nth(1).unwrap().children_with_tokens().next().unwrap();
-        let leaf1_0 = leaf1_0.into_token().unwrap();
-        assert_eq!(leaf1_0.text(), "1.0");
-        assert_eq!(leaf1_0.text_range(), TextRange::at(6.into(), 3.into()));
-        assert_eq!(format!("{leaf1_0}"), leaf1_0.text());
+        assert_eq!(format!("{leaf1_0}"), "1.0");
         assert_eq!(format!("{leaf1_0:?}"), "SyntaxKind(5)@6..9 \"1.0\"");
     }
     {
         let node2 = tree.children().nth(2).unwrap();
-        assert_eq!(node2.text(), "2.02.12.2");
-        let resolver = node2.resolver();
-        assert_eq!(node2.resolve_text(resolver.as_ref()), node2.text());
-        assert_eq!(format!("{node2}").as_str(), node2.text());
+        assert_eq!(node2.text().unwrap(), "2.02.12.2");
+        assert_eq!(format!("{node2}").as_str(), "2.02.12.2");
         assert_eq!(format!("{node2:?}"), "SyntaxKind(6)@9..18");
         assert_eq!(
             format!("{node2:#?}"),
@@ -175,14 +142,14 @@ fn assert_debug_display() {
     use std::fmt;
     fn f<T: fmt::Debug + fmt::Display>() {}
 
-    f::<ResolvedNode>();
-    f::<ResolvedToken>();
-    f::<ResolvedElement>();
-    f::<ResolvedElementRef<'static>>();
+    f::<SyntaxNode>();
+    f::<SyntaxToken>();
+    f::<SyntaxElement>();
+    f::<SyntaxElementRef<'static>>();
     f::<cstree::util::NodeOrToken<String, u128>>();
 
     fn dbg<T: fmt::Debug>() {}
-    dbg::<GreenNodeBuilder<'static, 'static, SyntaxKind>>();
+    dbg::<GreenNodeBuilder<SyntaxKind>>();
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,8 +161,6 @@ enum ByteKind {
 }
 
 impl Syntax for ByteKind {
-    type Data = [u8];
-
     fn from_raw(raw: RawSyntaxKind) -> Self {
         match raw.0 {
             0 => Self::Root,
@@ -209,7 +174,7 @@ impl Syntax for ByteKind {
         RawSyntaxKind(self as u32)
     }
 
-    fn static_data(self) -> Option<&'static Self::Data> {
+    fn static_data(self) -> Option<&'static [u8]> {
         match self {
             Self::Plus => Some(b"+"),
             _ => None,
@@ -225,89 +190,25 @@ fn byte_token_data() {
     builder.static_token(ByteKind::Plus);
     builder.token(ByteKind::Bytes, b"\xff\x00abc".as_slice());
     builder.finish_node();
-    let (green, cache) = builder.finish();
-    let resolver = cache.unwrap().into_interner().unwrap();
+    let green = builder.finish();
     let root = cstree::syntax::SyntaxNode::<ByteKind>::new_root(green);
 
     let first = root.first_token().unwrap();
     let plus = first.next_token().unwrap();
     let second = plus.next_token().unwrap();
 
-    assert_eq!(first.resolve_data(&resolver), b"\xff\x00abc");
+    assert_eq!(first.data(), b"\xff\x00abc");
     assert_eq!(plus.static_data(), Some(b"+".as_slice()));
-    assert_eq!(root.resolve_data(&resolver).len(), 11.into());
+    assert_eq!(root.data().len(), 11.into());
+    assert_eq!(first.text(), None);
     assert!(first.data_eq(second));
-    assert_eq!(first.data_key(), second.data_key());
 
-    let chunks = root
-        .resolve_data(&resolver)
-        .fold_chunks(Vec::new(), |mut chunks, chunk| {
-            chunks.push(chunk.to_vec());
-            chunks
-        });
+    let chunks = root.data().fold_chunks(Vec::new(), |mut chunks, chunk| {
+        chunks.push(chunk.to_vec());
+        chunks
+    });
     assert_eq!(
         chunks,
         vec![b"\xff\x00abc".to_vec(), b"+".to_vec(), b"\xff\x00abc".to_vec()]
     );
-}
-
-#[cfg(feature = "bytemuck")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(C)]
-struct Pair {
-    a: u32,
-    b: u32,
-}
-
-#[cfg(feature = "bytemuck")]
-unsafe impl bytemuck::Zeroable for Pair {}
-
-#[cfg(feature = "bytemuck")]
-unsafe impl bytemuck::Pod for Pair {}
-
-#[cfg(feature = "bytemuck")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-enum PairKind {
-    Root,
-    Pair,
-}
-
-#[cfg(feature = "bytemuck")]
-impl Syntax for PairKind {
-    type Data = Pair;
-
-    fn from_raw(raw: RawSyntaxKind) -> Self {
-        match raw.0 {
-            0 => Self::Root,
-            1 => Self::Pair,
-            _ => panic!("invalid pair kind"),
-        }
-    }
-
-    fn into_raw(self) -> RawSyntaxKind {
-        RawSyntaxKind(self as u32)
-    }
-}
-
-#[cfg(feature = "bytemuck")]
-#[test]
-fn typed_token_data() {
-    let value = Pair { a: 1, b: 2 };
-    let mut builder = GreenNodeBuilder::<PairKind>::new();
-    builder.start_node(PairKind::Root);
-    builder.token(PairKind::Pair, &value);
-    builder.token(PairKind::Pair, &value);
-    builder.finish_node();
-    let (green, cache) = builder.finish();
-    let resolver = cache.unwrap().into_interner().unwrap();
-    let root = cstree::syntax::SyntaxNode::<PairKind>::new_root(green);
-
-    let first = root.first_token().unwrap();
-    let second = first.next_token().unwrap();
-    assert_eq!(first.resolve_data(&resolver), &value);
-    assert!(first.data_eq(second));
-    assert_eq!(first.data_key(), second.data_key());
-    assert_eq!(first.debug(&resolver), "Pair@0..8 Pair { a: 1, b: 2 }");
-    assert_eq!(first.display(&resolver), "Pair { a: 1, b: 2 }");
 }

@@ -17,7 +17,6 @@ pub use self::{iter::GreenNodeChildren, node::GreenNode, token::GreenToken};
 mod tests {
     use super::*;
     use node::GreenNodeHead;
-    use token::GreenTokenData;
 
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -38,7 +37,6 @@ mod tests {
         assert_eq!(size_of::<GreenNode>(),          size_of::<*const u8>());
         assert_eq!(size_of::<GreenToken>(),         size_of::<*const u8>());
         assert_eq!(size_of::<GreenNodeHead>(),      size_of::<u32>() * 3);
-        assert_eq!(size_of::<GreenTokenData>(),     size_of::<u32>() * 3);
         assert_eq!(size_of::<GreenElement>(),       size_of::<*const u8>() * 2);
         assert_eq!(size_of::<PackedGreenElement>(), size_of::<*const u8>());
     }

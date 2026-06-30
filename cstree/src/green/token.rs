@@ -1,18 +1,16 @@
+extern crate alloc;
+
+use alloc::vec::Vec;
 use core::{fmt, hash, mem::ManuallyDrop, ptr::NonNull};
 
-use crate::{
-    RawSyntaxKind,
-    interning::{Resolver, TokenData, TokenKey},
-    text::TextSize,
-};
+use crate::{RawSyntaxKind, text::TextSize};
 use triomphe::Arc;
 
 #[repr(align(2))] // to use 1 bit for pointer tagging. NB: this is an at-least annotation
-#[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub(super) struct GreenTokenData {
     pub(super) kind: RawSyntaxKind,
-    pub(super) data: Option<TokenKey>,
-    pub(super) data_len: TextSize,
+    pub(super) data: Vec<u8>,
 }
 
 /// Leaf node in the immutable "green" tree.
@@ -45,7 +43,11 @@ impl GreenToken {
 
     /// Creates a new Token.
     #[inline]
-    pub(super) fn new(data: GreenTokenData) -> GreenToken {
+    pub(super) fn new(kind: RawSyntaxKind, data: &[u8]) -> GreenToken {
+        let data = GreenTokenData {
+            kind,
+            data: data.to_vec(),
+        };
         let ptr = Arc::into_raw(Arc::new(data));
         let ptr = NonNull::new(ptr as *mut _).unwrap();
         GreenToken {
@@ -61,48 +63,26 @@ impl GreenToken {
 
     /// The original source data of this Token.
     #[inline]
-    pub fn data<'i, I, Data>(&self, resolver: &'i I) -> Option<&'i Data>
-    where
-        I: Resolver<TokenKey, Data> + ?Sized,
-        Data: TokenData + ?Sized,
-    {
-        self.raw_data().data.map(|key| resolver.resolve(key))
+    pub fn data(&self) -> &[u8] {
+        &self.raw_data().data
     }
 
     /// The original source text of this Token.
     #[inline]
-    pub fn text<'i, I>(&self, resolver: &'i I) -> Option<&'i str>
-    where
-        I: Resolver<TokenKey, str> + ?Sized,
-    {
-        self.raw_data().data.map(|key| resolver.resolve(key))
+    pub fn text(&self) -> Option<&str> {
+        core::str::from_utf8(self.data()).ok()
     }
 
     /// Returns the length of data covered by this token, in bytes.
     #[inline]
     pub fn data_len(&self) -> TextSize {
-        self.raw_data().data_len
+        (self.raw_data().data.len() as u32).into()
     }
 
     /// Returns the length of text covered by this token, in bytes.
     #[inline]
     pub fn text_len(&self) -> TextSize {
         self.data_len()
-    }
-
-    /// Returns the interned key of data covered by this token.
-    /// This key may be used for comparisons with other keys interned by the same interner.
-    ///
-    /// See also [`data`](GreenToken::data).
-    #[inline]
-    pub fn data_key(&self) -> Option<TokenKey> {
-        self.raw_data().data
-    }
-
-    /// Returns the interned key of text covered by this token.
-    #[inline]
-    pub fn text_key(&self) -> Option<TokenKey> {
-        self.data_key()
     }
 }
 

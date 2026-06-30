@@ -10,8 +10,7 @@
 //!     [`start_node`](crate::build::GreenNodeBuilder::start_node), [`token`](crate::build::GreenNodeBuilder::token) and
 //!     [`finish_node`](crate::build::GreenNodeBuilder::finish_node) from your parser
 //!
-//!  3. Call [`SyntaxNode::new_root`](crate::syntax::SyntaxNode::new_root) or
-//!     [`SyntaxNode::new_root_with_resolver`](crate::syntax::SyntaxNode::new_root_with_resolver) with the resulting
+//!  3. Call [`SyntaxNode::new_root`](crate::syntax::SyntaxNode::new_root) with the resulting
 //!     [`GreenNode`](crate::green::GreenNode) to obtain a syntax tree that you can traverse
 //!
 //! Let's walk through the motions of parsing a (very) simple language into `cstree` syntax trees.
@@ -70,8 +69,6 @@
 //! # use cstree::{Syntax, RawSyntaxKind};
 //!
 //! impl Syntax for Calculator {
-//!     type Data = str;
-//!
 //!     fn from_raw(raw: RawSyntaxKind) -> Self {
 //!         // This just needs to be the inverse of `into_raw`, but could also
 //!         // be an `impl TryFrom<u32> for SyntaxKind` or any other conversion.
@@ -91,12 +88,12 @@
 //!         RawSyntaxKind(self as u32)
 //!     }
 //!
-//!     fn static_data(self) -> Option<&'static Self::Data> {
+//!     fn static_data(self) -> Option<&'static [u8]> {
 //!         match self {
-//!             SyntaxKind::Plus => Some("+"),
-//!             SyntaxKind::Minus => Some("-"),
-//!             SyntaxKind::LParen => Some("("),
-//!             SyntaxKind::RParen => Some(")"),
+//!             SyntaxKind::Plus => Some(b"+"),
+//!             SyntaxKind::Minus => Some(b"-"),
+//!             SyntaxKind::LParen => Some(b"("),
+//!             SyntaxKind::RParen => Some(b")"),
 //!             _ => None,
 //!         }
 //!     }
@@ -152,7 +149,7 @@
 //!     // `Peekable` is a standard library iterator adapter that allows
 //!     // looking ahead at the next item without removing it from the iterator yet
 //!     lexer:   Peekable<Lexer<'input>>,
-//!     builder: GreenNodeBuilder<'static, 'static, Calculator>,
+//!     builder: GreenNodeBuilder<Calculator>,
 //! }
 //!
 //! impl<'input> Parser<'input> {
@@ -291,37 +288,25 @@
 //!
 //! ```rust,ignore
 //! impl Parser<'_> {
-//!     pub fn finish(mut self) -> (GreenNode, impl Interner) {
+//!     pub fn finish(mut self) -> GreenNode {
 //!         assert!(self.lexer.next().map(|t| t == Token::EoF).unwrap_or(true));
-//!         let (tree, cache) = self.builder.finish();
-//!         (tree, cache.unwrap().into_interner().unwrap())
+//!         self.builder.finish()
 //!     }
 //! }
 //! ```
 //!
-//! `finish` also returns the cache it used to deduplicate tree nodes and tokens, so you can re-use
-//! it for parsing related inputs (e.g., different source files from the same crate may share a lot
-//! of common function and type names that can be deduplicated). See `GreenNodeBuilder`'s
-//! documentation for more information on this, in particular the `with_cache` and `from_cache`
-//! methods. Most importantly for us, we can extract the [`Interner`](crate::interning::Interner) that
-//! contains the source text of the tree's tokens from the cache, which we need if we want to look
-//! up things like variable names or the value of numbers for our calculator.
-//!
 //! To work with the syntax tree, you'll want to upgrade it to a [`SyntaxNode`](crate::syntax::SyntaxNode)
-//! using [`SyntaxNode::new_root`](crate::syntax::SyntaxNode::new_root). You can also use
-//! [`SyntaxNode::new_root_with_resolver`](crate::syntax::SyntaxNode::new_root_with_resolver) to combine
-//! tree and interner, which lets you directly retrieve source text and makes the nodes implement
-//! `Display` and `Debug`. The same output can be produced from `SyntaxNode`s by calling the
-//! `debug` or `display` method with a [`Resolver`](crate::interning::Resolver). To visualize the whole
-//! syntax tree, pass `true` for the `recursive` parameter on `debug`, or simply debug-print a
-//! [`ResolvedNode`](crate::syntax::ResolvedNode):
+//! using [`SyntaxNode::new_root`](crate::syntax::SyntaxNode::new_root). Tokens store their bytes in
+//! the tree, so token text can be accessed directly with
+//! [`SyntaxToken::text`](crate::syntax::SyntaxToken::text). To visualize the whole syntax tree,
+//! pass `true` for the `recursive` parameter on `debug`, or simply debug-print a `SyntaxNode`:
 //!
 //! ```rust,ignore
 //! let input = "11 + 2-(5 + 4)";
 //! let mut parser = Parser::new(input);
 //! parser.parse().unwrap();
-//! let (tree, interner) = parser.finish();
-//! let root = SyntaxNode::<Calculator>::new_root_with_resolver(tree, interner);
+//! let tree = parser.finish();
+//! let root = SyntaxNode::<Calculator>::new_root(tree);
 //! dbg!(root);
 //! ```
 //!

@@ -1,10 +1,6 @@
 use std::{io::Write, iter::Peekable};
 
-use cstree::{
-    interning::Interner,
-    prelude::*,
-    syntax::{ResolvedElementRef, ResolvedNode},
-};
+use cstree::{prelude::*, syntax::SyntaxElementRef};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -22,8 +18,6 @@ pub enum SyntaxKind {
 type Calculator = SyntaxKind;
 
 impl Syntax for Calculator {
-    type Data = str;
-
     fn from_raw(raw: RawSyntaxKind) -> Self {
         // This just needs to be the inverse of `into_raw`, but could also
         // be an `impl TryFrom<u32> for SyntaxKind` or any other conversion.
@@ -43,12 +37,12 @@ impl Syntax for Calculator {
         RawSyntaxKind(self as u32)
     }
 
-    fn static_data(self) -> Option<&'static Self::Data> {
+    fn static_data(self) -> Option<&'static [u8]> {
         match self {
-            SyntaxKind::Plus => Some("+"),
-            SyntaxKind::Minus => Some("-"),
-            SyntaxKind::LParen => Some("("),
-            SyntaxKind::RParen => Some(")"),
+            SyntaxKind::Plus => Some(b"+"),
+            SyntaxKind::Minus => Some(b"-"),
+            SyntaxKind::LParen => Some(b"("),
+            SyntaxKind::RParen => Some(b")"),
             _ => None,
         }
     }
@@ -134,7 +128,7 @@ impl<'input> Iterator for Lexer<'input> {
 
 pub struct Parser<'input> {
     lexer: Peekable<Lexer<'input>>,
-    builder: GreenNodeBuilder<'static, 'static, Calculator>,
+    builder: GreenNodeBuilder<Calculator>,
 }
 
 impl<'input> Parser<'input> {
@@ -210,10 +204,9 @@ impl<'input> Parser<'input> {
         Ok(())
     }
 
-    pub fn finish(mut self) -> (GreenNode, impl Interner + use<>) {
+    pub fn finish(mut self) -> GreenNode {
         assert!(self.lexer.next().map(|t| t == Token::EoF).unwrap_or(true));
-        let (tree, cache) = self.builder.finish();
-        (tree, cache.unwrap().into_interner().unwrap())
+        self.builder.finish()
     }
 }
 
@@ -235,8 +228,8 @@ fn main() {
             continue;
         }
 
-        let (tree, interner) = parser.finish();
-        let root = SyntaxNode::<Calculator>::new_root_with_resolver(tree, interner);
+        let tree = parser.finish();
+        let root = SyntaxNode::<Calculator>::new_root(tree);
 
         if let Some(expr) = root.first_child_or_token() {
             let result = eval_elem(expr, &mut root.children_with_tokens());
@@ -245,7 +238,7 @@ fn main() {
     }
 }
 
-fn eval(expr: &ResolvedNode<Calculator>) -> i64 {
+fn eval(expr: &SyntaxNode<Calculator>) -> i64 {
     let mut children = expr.children_with_tokens();
     let lhs = eval_elem(children.next().expect("empty expr"), &mut children);
     let Some(op) = children.next().map(|elem| elem.kind()) else {
@@ -262,8 +255,8 @@ fn eval(expr: &ResolvedNode<Calculator>) -> i64 {
 }
 
 fn eval_elem<'e>(
-    expr: ResolvedElementRef<'_, Calculator>,
-    children: &mut impl Iterator<Item = ResolvedElementRef<'e, Calculator>>,
+    expr: SyntaxElementRef<'_, Calculator>,
+    children: &mut impl Iterator<Item = SyntaxElementRef<'e, Calculator>>,
 ) -> i64 {
     use cstree::util::NodeOrToken;
 
@@ -274,7 +267,7 @@ fn eval_elem<'e>(
         }
         NodeOrToken::Token(t) => match t.kind() {
             SyntaxKind::Int => {
-                let number_str = t.text();
+                let number_str = t.text().expect("integer token was not valid UTF-8");
                 number_str.parse().expect("parsed int could not be evaluated")
             }
             SyntaxKind::LParen => {
@@ -325,8 +318,8 @@ mod tests {
         let input = "11 + 2-(5 + 4)";
         let mut parser = Parser::new(input);
         parser.parse().unwrap();
-        let (tree, interner) = parser.finish();
-        let root = SyntaxNode::<Calculator>::new_root_with_resolver(tree, interner);
+        let tree = parser.finish();
+        let root = SyntaxNode::<Calculator>::new_root(tree);
         dbg!(root);
     }
 }

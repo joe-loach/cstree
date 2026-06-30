@@ -1,6 +1,6 @@
 mod attributes;
 
-use syn::{Token, parse::Parse, punctuated::Punctuated};
+use syn::{Token, punctuated::Punctuated};
 
 use crate::{errors::ErrorContext, symbols::*};
 
@@ -11,7 +11,6 @@ pub(crate) type Result<T, E = ()> = core::result::Result<T, E>;
 
 pub(crate) struct SyntaxKindEnum<'i> {
     pub(crate) name: syn::Ident,
-    pub(crate) data: Option<syn::Type>,
     pub(crate) repr: Option<syn::Ident>,
     pub(crate) variants: Vec<SyntaxKindVariant<'i>>,
     pub(crate) source: &'i syn::DeriveInput,
@@ -41,17 +40,6 @@ impl<'i> SyntaxKindEnum<'i> {
             }
         }
 
-        let mut data = Attr::none(error_handler, DATA);
-        for attr in item.attrs.iter().filter(|&attr| attr.path() == SYNTAX) {
-            match attr.parse_args::<SyntaxAttr>() {
-                Ok(SyntaxAttr { data: ty }) => data.set(attr, ty),
-                Err(e) => {
-                    error_handler.error_at(attr, "expected `#[syntax(data = Type)]`");
-                    error_handler.syn_error(e);
-                }
-            }
-        }
-
         let variants = enum_data
             .variants
             .iter()
@@ -60,26 +48,10 @@ impl<'i> SyntaxKindEnum<'i> {
 
         Ok(Self {
             name,
-            data: data.get(),
             repr: repr.get(),
             variants,
             source: item,
         })
-    }
-}
-
-struct SyntaxAttr {
-    data: syn::Type,
-}
-
-impl Parse for SyntaxAttr {
-    fn parse(input: syn::parse::ParseStream<'_>) -> syn::Result<Self> {
-        let name: syn::Ident = input.parse()?;
-        if name != DATA {
-            return Err(syn::Error::new_spanned(name, "expected `data`"));
-        }
-        input.parse::<Token![=]>()?;
-        Ok(Self { data: input.parse()? })
     }
 }
 

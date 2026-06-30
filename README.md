@@ -47,11 +47,9 @@ Notable differences of `cstree` compared to `rowan`:
   atomically reference counting syntax trees as a whole, which also gets rid of the need to reference count
   individual nodes.
 - `SyntaxNode`s can hold custom data.
-- `cstree` trees are trees over interned strings. This means `cstree` will deduplicate the text of tokens with the
-  same source string, such as identifiers with the same name. In this position, `rowan` stores each token's text
-  together with its metadata as a custom DST (dynamically-sized type).
-- `cstree` includes some performance optimizations for tree creation: it only allocates space for new nodes on the
-  heap if they are not in cache and avoids recursively hashing subtrees by pre-hashing them.
+- `cstree` stores token bytes inline with green tokens, similar to `rowan`, instead of relying on an external interner
+  to resolve token text.
+- `cstree` avoids recursively hashing subtrees by pre-hashing them during tree construction.
 - `cstree` includes some performance optimizations for tree traversal: persisting red nodes allows tree traversal
   methods to return references instead of cloning nodes, which involves updating the tree's reference count. You can
   still `clone` the reference to obtain an owned node, but you only pay that cost when you need to.
@@ -67,11 +65,6 @@ Notable differences of `cstree` compared to `rowan`:
 - `std` (enabled by default) - Support for standard library features
 - `derive` - Adds support for deriving the `Syntax` trait
 - `serialize` - Implements `serde::{De,}Serialize` for CSTs
-- `lasso` - Allows using interners from the `lasso` crate for green trees. 
-  - When enabled, `cstree`'s default interners will use `lasso` internally, too.
-- `multi_threaded_interning` - Additionally provide threadsafe interner types. 
-  - Where applicable (and if the corresponding features are selected), enabling this feature will also make `cstree` provide compatibility implementations for multi-threaded interners from other crates.
-  - Enabling this feature will automatically enable the `lasso` feature, as the multi-threaded interners are backed by `lasso`.
 
 ## Getting Started
 
@@ -84,8 +77,7 @@ to happen to go from input text to a `cstree` syntax tree:
 
  2. Create a `GreenNodeBuilder` and call `start_node`, `token` and `finish_node` from your parser  
 
- 3. Call `SyntaxNode::new_root` or `SyntaxNode::new_root_with_resolver` with the resulting
- `GreenNode` to obtain a syntax tree that you can traverse
+ 3. Call `SyntaxNode::new_root` with the resulting `GreenNode` to obtain a syntax tree that you can traverse
 
 Let's walk through the motions of parsing a (very) simple language into `cstree` syntax trees.
 We'll just support addition and subtraction on integers, from which the user is allowed to construct a single,
@@ -202,7 +194,7 @@ pub struct Parser<'input> {
              // `Peekable` is a standard library iterator adapter that allows
              // looking ahead at the next item without removing it from the iterator yet
     lexer:   Peekable<Lexer<'input>>,
-    builder: GreenNodeBuilder<'static, 'static, Calculator>,
+    builder: GreenNodeBuilder<Calculator>,
 }
 
 impl<'input> Parser<'input> {
@@ -338,35 +330,24 @@ finally returns the tree that we have painstakingly constructed.
 
 ```rust
 impl Parser<'_> {
-    pub fn finish(mut self) -> (GreenNode, impl Interner) {
+    pub fn finish(mut self) -> GreenNode {
         assert!(self.lexer.next().map(|t| t == Token::EoF).unwrap_or(true));
-        let (tree, cache) = self.builder.finish();
-        (tree, cache.unwrap().into_interner().unwrap())
+        self.builder.finish()
     }
 }
 ```
 
-`finish` also returns the cache it used to deduplicate tree nodes and tokens, so you can re-use it
-for parsing related inputs (e.g., different source files from the same crate may share a lot of
-common function and type names that can be deduplicated). See `GreenNodeBuilder`'s documentation for
-more information on this, in particular the `with_cache` and `from_cache` methods. Most importantly
-for us, we can extract the `Interner` that contains the source text of the tree's tokens from the
-cache, which we need if we want to look up things like variable names or the value of numbers for
-our calculator.
-
 To work with the syntax tree, you'll want to upgrade it to a `SyntaxNode` using
-`SyntaxNode::new_root`.  You can also use `SyntaxNode::new_root_with_resolver` to combine tree and
-interner, which lets you directly retrieve source text and makes the nodes implement `Display` and
-`Debug`. The same output can be produced from `SyntaxNode`s by calling the `debug` or `display`
-method with a `Resolver`. To visualize the whole syntax tree, pass `true` for the `recursive`
-parameter on `debug`, or simply debug-print a `ResolvedNode`:
+`SyntaxNode::new_root`. Tokens store their bytes in the tree, so source text can be retrieved
+directly from tokens with `SyntaxToken::text`. To visualize the whole syntax tree, pass `true` for
+the `recursive` parameter on `debug`, or simply debug-print a `SyntaxNode`:
 
 ```rust
 let input = "11 + 2-(5 + 4)";
 let mut parser = Parser::new(input);
 parser.parse().unwrap();
-let (tree, interner) = parser.finish();
-let root = SyntaxNode::<Calculator>::new_root_with_resolver(tree, interner);
+let tree = parser.finish();
+let root = SyntaxNode::<Calculator>::new_root(tree);
 dbg!(root);
 ```
 

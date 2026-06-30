@@ -13,7 +13,7 @@
 //!     - "+" Token(Add)
 //!     - "4" Token(Number)
 
-use cstree::{Syntax, build::GreenNodeBuilder, interning::Resolver, util::NodeOrToken};
+use cstree::{Syntax, build::GreenNodeBuilder, util::NodeOrToken};
 use std::iter::Peekable;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Syntax)]
@@ -52,7 +52,7 @@ type SyntaxElement = cstree::util::NodeOrToken<SyntaxNode, SyntaxToken>;
 type SyntaxElementRef<'a> = cstree::util::NodeOrToken<&'a SyntaxNode, &'a SyntaxToken>;
 
 struct Parser<'input, I: Iterator<Item = (SyntaxKind, &'input str)>> {
-    builder: GreenNodeBuilder<'static, 'static, MySyntax>,
+    builder: GreenNodeBuilder<MySyntax>,
     iter: Peekable<I>,
 }
 impl<'input, I: Iterator<Item = (SyntaxKind, &'input str)>> Parser<'input, I> {
@@ -99,33 +99,32 @@ impl<'input, I: Iterator<Item = (SyntaxKind, &'input str)>> Parser<'input, I> {
         self.handle_operation(&[Add, Sub], Self::parse_mul)
     }
 
-    fn parse(mut self) -> (SyntaxNode, impl Resolver + use<I>) {
+    fn parse(mut self) -> SyntaxNode {
         self.builder.start_node(Root);
         self.parse_add();
         self.builder.finish_node();
 
-        let (tree, cache) = self.builder.finish();
-        (SyntaxNode::new_root(tree), cache.unwrap().into_interner().unwrap())
+        SyntaxNode::new_root(self.builder.finish())
     }
 }
 
-fn print(indent: usize, element: SyntaxElementRef<'_>, resolver: &impl Resolver) {
+fn print(indent: usize, element: SyntaxElementRef<'_>) {
     let kind = element.kind();
     print!("{:indent$}", "", indent = indent);
     match element {
         NodeOrToken::Node(node) => {
             println!("- {kind:?}");
             for child in node.children_with_tokens() {
-                print(indent + 2, child, resolver);
+                print(indent + 2, child);
             }
         }
 
-        NodeOrToken::Token(token) => println!("- {:?} {:?}", token.resolve_text(resolver), kind),
+        NodeOrToken::Token(token) => println!("- {:?} {:?}", token.text(), kind),
     }
 }
 
 fn main() {
-    let (ast, resolver) = Parser {
+    let ast = Parser {
         builder: GreenNodeBuilder::new(),
         iter: vec![
             // 1 + 2 * 3 + 4
@@ -147,5 +146,5 @@ fn main() {
         .peekable(),
     }
     .parse();
-    print(0, (&ast).into(), &resolver);
+    print(0, (&ast).into());
 }

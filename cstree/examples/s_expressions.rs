@@ -40,11 +40,8 @@ pub enum SyntaxKind {
 type SExprSyntax = SyntaxKind;
 use SyntaxKind::*;
 
-/// `GreenNode` is an immutable tree, which caches identical nodes and tokens, but doesn't contain
-/// offsets and parent pointers.
-/// `cstree` also deduplicates the actual source string in addition to the tree nodes, so we will need
-/// the `Resolver` to get the real text back from the interned representation.
-use cstree::{green::GreenNode, interning::Resolver};
+/// `GreenNode` is an immutable tree, which stores token bytes but doesn't contain offsets and parent pointers.
+use cstree::green::GreenNode;
 
 /// You can construct `GreenNode`s by hand, but a builder is helpful for top-down parsers: it maintains
 /// a stack of currently in-progress nodes.
@@ -52,9 +49,8 @@ use cstree::build::GreenNodeBuilder;
 
 /// The parse results are stored as a "green tree".
 /// We'll discuss how to work with the results later.
-struct Parse<I> {
+struct Parse {
     green_node: GreenNode,
-    resolver: I,
     #[allow(unused)]
     errors: Vec<String>,
 }
@@ -62,12 +58,12 @@ struct Parse<I> {
 /// Now, let's write a parser.
 /// Note that `parse` does not return a `Result`:
 /// By design, syntax trees can be built even for completely invalid source code.
-fn parse(text: &str) -> Parse<impl Resolver + use<>> {
+fn parse(text: &str) -> Parse {
     struct Parser<'input> {
         /// input tokens, including whitespace.
         tokens: VecDeque<(SyntaxKind, &'input str)>,
         /// the in-progress green tree.
-        builder: GreenNodeBuilder<'static, 'static, SExprSyntax>,
+        builder: GreenNodeBuilder<SExprSyntax>,
         /// the list of syntax errors we've accumulated so far.
         errors: Vec<String>,
     }
@@ -83,7 +79,7 @@ fn parse(text: &str) -> Parse<impl Resolver + use<>> {
     }
 
     impl Parser<'_> {
-        fn parse(mut self) -> Parse<impl Resolver + use<>> {
+        fn parse(mut self) -> Parse {
             // Make sure that the root node covers all source
             self.builder.start_node(Root);
             // Parse zero or more S-expressions
@@ -105,12 +101,9 @@ fn parse(text: &str) -> Parse<impl Resolver + use<>> {
             self.builder.finish_node();
 
             // Get the green tree from the builder.
-            // Note that, since we didn't provide our own interner to the builder, it has
-            // instantiated one for us and now returns it together with the tree.
-            let (tree, cache) = self.builder.finish();
+            let tree = self.builder.finish();
             Parse {
                 green_node: tree,
-                resolver: cache.unwrap().into_interner().unwrap(),
                 errors: self.errors,
             }
         }
@@ -194,12 +187,8 @@ type SyntaxToken = cstree::syntax::SyntaxToken<SExprSyntax>;
 #[allow(unused)]
 type SyntaxElement = cstree::syntax::SyntaxElement<SExprSyntax>;
 
-impl<I> Parse<I> {
+impl Parse {
     fn syntax(&self) -> SyntaxNode {
-        // If we owned `self`, we could use `new_root_with_resolver` instead at this point to attach
-        // `self.resolver` to the tree. This simplifies retrieving text and provides automatic
-        // implementations for useful traits like `Display`, but also consumes the resolver (it can
-        // still be accessed indirectly via the `resolver` method).
         SyntaxNode::new_root(self.green_node.clone())
     }
 }
@@ -210,10 +199,8 @@ fn test_parser() {
     let text = "(+ (* 15 2) 62)";
     let parse = parse(text);
     let node = parse.syntax();
-    let resolver = &parse.resolver;
     assert_eq!(
-        // note how, since we didn't attach the resolver in `syntax`, we now need to provide it
-        node.debug(resolver, false),
+        node.debug(false),
         "Root@0..15", // root node, spanning 15 bytes
     );
     assert_eq!(node.children().count(), 1);
@@ -314,12 +301,12 @@ enum Op {
 }
 
 impl ast::Atom {
-    fn eval(&self, resolver: &impl Resolver) -> Option<i64> {
-        self.text(resolver).parse().ok()
+    fn eval(&self) -> Option<i64> {
+        self.text().parse().ok()
     }
 
-    fn as_op(&self, resolver: &impl Resolver) -> Option<Op> {
-        let op = match self.text(resolver) {
+    fn as_op(&self) -> Option<Op> {
+        let op = match self.text() {
             "+" => Op::Add,
             "-" => Op::Sub,
             "*" => Op::Mul,
@@ -329,12 +316,12 @@ impl ast::Atom {
         Some(op)
     }
 
-    fn text<'r>(&self, resolver: &'r impl Resolver) -> &'r str {
+    fn text(&self) -> &str {
         use cstree::util::NodeOrToken;
 
         match self.0.green().children().next() {
             Some(NodeOrToken::Token(token)) => SExprSyntax::static_text(SExprSyntax::from_raw(token.kind()))
-                .or_else(|| token.text(resolver))
+                .or_else(|| token.text())
                 .unwrap(),
             _ => unreachable!(),
         }
@@ -346,13 +333,13 @@ impl ast::List {
         self.0.children().cloned().filter_map(SExpr::cast)
     }
 
-    fn eval(&self, resolver: &impl Resolver) -> Option<i64> {
+    fn eval(&self) -> Option<i64> {
         let op = match self.sexps().next()?.kind() {
-            SexpKind::Atom(atom) => atom.as_op(resolver)?,
+            SexpKind::Atom(atom) => atom.as_op()?,
             _ => return None,
         };
-        let arg1 = self.sexps().nth(1)?.eval(resolver)?;
-        let arg2 = self.sexps().nth(2)?.eval(resolver)?;
+        let arg1 = self.sexps().nth(1)?.eval()?;
+        let arg2 = self.sexps().nth(2)?.eval()?;
         let res = match op {
             Op::Add => arg1 + arg2,
             Op::Sub => arg1 - arg2,
@@ -365,15 +352,15 @@ impl ast::List {
 }
 
 impl SExpr {
-    fn eval(&self, resolver: &impl Resolver) -> Option<i64> {
+    fn eval(&self) -> Option<i64> {
         match self.kind() {
-            SexpKind::Atom(atom) => atom.eval(resolver),
-            SexpKind::List(list) => list.eval(resolver),
+            SexpKind::Atom(atom) => atom.eval(),
+            SexpKind::List(list) => list.eval(),
         }
     }
 }
 
-impl<I> Parse<I> {
+impl Parse {
     fn root(&self) -> ast::Root {
         ast::Root::cast(self.syntax()).unwrap()
     }
@@ -390,8 +377,7 @@ nan
 ";
     let parse = parse(sexps);
     let root = parse.root();
-    let resolver = &parse.resolver;
-    let res = root.sexps().map(|it| it.eval(resolver)).collect::<Vec<_>>();
+    let res = root.sexps().map(|it| it.eval()).collect::<Vec<_>>();
     eprintln!("{res:?}");
     assert_eq!(res, vec![Some(92), Some(92), None, None, Some(92),])
 }

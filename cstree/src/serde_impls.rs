@@ -1,12 +1,7 @@
 //! Serialization and Deserialization for syntax trees.
 
 use crate::{
-    RawSyntaxKind, Syntax,
-    build::GreenNodeBuilder,
-    interning::{Resolver, TokenData, TokenKey},
-    syntax::{ResolvedNode, SyntaxNode},
-    traversal::WalkEvent,
-    util::NodeOrToken,
+    RawSyntaxKind, Syntax, build::GreenNodeBuilder, syntax::SyntaxNode, traversal::WalkEvent, util::NodeOrToken,
 };
 extern crate alloc;
 use alloc::{borrow::Cow, collections::VecDeque, vec::Vec};
@@ -42,10 +37,10 @@ macro_rules! data_list {
 /// contains a boolean which indicates if this node has a data. If it has one,
 /// the deserializer should pop the first element from the data list and continue.
 ///
-/// Takes the `Syntax` (`$l`), `SyntaxNode` (`$node`), `Resolver` (`$resolver`),
-/// `Serializer` (`$serializer`), and an optional `data_list` which must be a `mut Vec<D>`.
+/// Takes the `Syntax` (`$l`), `SyntaxNode` (`$node`), `Serializer` (`$serializer`),
+/// and an optional `data_list` which must be a `mut Vec<D>`.
 macro_rules! gen_serialize {
-    ($l:ident, $node:expr, $resolver:expr, $ser:ident, $($data_list:ident)?) => {{
+    ($l:ident, $node:expr, $ser:ident, $($data_list:ident)?) => {{
         #[allow(unused_variables)]
         let events = $node.preorder_with_tokens().filter_map(|event| match event {
             WalkEvent::Enter(NodeOrToken::Node(node)) => {
@@ -60,7 +55,7 @@ macro_rules! gen_serialize {
 
                 Some(Event::EnterNode($l::into_raw(node.kind()), has_data))
             }
-            WalkEvent::Enter(NodeOrToken::Token(tok)) => Some(Event::Token($l::into_raw(tok.kind()), TokenPayload(Cow::Borrowed(tok.resolve_data($resolver).as_bytes())))),
+            WalkEvent::Enter(NodeOrToken::Token(tok)) => Some(Event::Token($l::into_raw(tok.kind()), TokenPayload(Cow::Borrowed(tok.data())))),
 
             WalkEvent::Leave(NodeOrToken::Node(_)) => Some(Event::LeaveNode),
             WalkEvent::Leave(NodeOrToken::Token(_)) => None,
@@ -168,22 +163,14 @@ impl<'de> Deserialize<'de> for TokenPayload<'de> {
     }
 }
 
-/// Make a `SyntaxNode` serializable but without serializing the data.
-pub(crate) struct SerializeWithResolver<'node, 'resolver, S: Syntax, D: 'static, R: ?Sized> {
-    pub(crate) node: &'node SyntaxNode<S, D>,
-    pub(crate) resolver: &'resolver R,
-}
-
 /// Make a `SyntaxNode` serializable which will include the data for serialization.
-pub(crate) struct SerializeWithData<'node, 'resolver, S: Syntax, D: 'static, R: ?Sized> {
+pub(crate) struct SerializeWithData<'node, S: Syntax, D: 'static> {
     pub(crate) node: &'node SyntaxNode<S, D>,
-    pub(crate) resolver: &'resolver R,
 }
 
-impl<S, D, R> Serialize for SerializeWithData<'_, '_, S, D, R>
+impl<S, D> Serialize for SerializeWithData<'_, S, D>
 where
     S: Syntax,
-    R: Resolver<TokenKey, S::Data> + ?Sized,
     D: Serialize,
 {
     fn serialize<Ser>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error>
@@ -191,41 +178,23 @@ where
         Ser: serde::Serializer,
     {
         let mut data_list = Vec::new();
-        gen_serialize!(S, self.node, self.resolver, serializer, data_list)
+        gen_serialize!(S, self.node, serializer, data_list)
     }
 }
 
-impl<S, D, R> Serialize for SerializeWithResolver<'_, '_, S, D, R>
+impl<S, D> Serialize for SyntaxNode<S, D>
 where
     S: Syntax,
-    R: Resolver<TokenKey, S::Data> + ?Sized,
 {
     fn serialize<Ser>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error>
     where
         Ser: serde::Serializer,
     {
-        gen_serialize!(S, self.node, self.resolver, serializer,)
+        gen_serialize!(S, self, serializer,)
     }
 }
 
-impl<S, D> Serialize for ResolvedNode<S, D>
-where
-    S: Syntax,
-    D: Serialize,
-{
-    fn serialize<Ser>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error>
-    where
-        Ser: serde::Serializer,
-    {
-        let node = SerializeWithResolver {
-            node: self,
-            resolver: self.resolver().as_ref(),
-        };
-        node.serialize(serializer)
-    }
-}
-
-impl<'de, S, D> Deserialize<'de> for ResolvedNode<S, D>
+impl<'de, S, D> Deserialize<'de> for SyntaxNode<S, D>
 where
     S: Syntax,
     D: Deserialize<'de>,
@@ -245,7 +214,7 @@ where
         De: serde::Deserializer<'de>,
     {
         struct EventVisitor<S: Syntax, D: 'static> {
-            _marker: PhantomData<fn() -> ResolvedNode<S, D>>,
+            _marker: PhantomData<fn() -> SyntaxNode<S, D>>,
         }
 
         impl<'de, S, D> Visitor<'de> for EventVisitor<S, D>
@@ -253,7 +222,7 @@ where
             S: Syntax,
             D: Deserialize<'de>,
         {
-            type Value = (ResolvedNode<S, D>, VecDeque<bool>);
+            type Value = (SyntaxNode<S, D>, VecDeque<bool>);
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("a list of tree events")
@@ -277,13 +246,11 @@ where
                     }
                 }
 
-                let (tree, cache) = builder.finish();
-                let tree = ResolvedNode::new_root_with_resolver(tree, cache.unwrap().into_interner().unwrap());
-                Ok((tree, data_indices))
+                Ok((SyntaxNode::new_root(builder.finish()), data_indices))
             }
         }
 
-        struct ProcessedEvents<S: Syntax, D: 'static>(ResolvedNode<S, D>, VecDeque<bool>);
+        struct ProcessedEvents<S: Syntax, D: 'static>(SyntaxNode<S, D>, VecDeque<bool>);
         impl<'de, S, D> Deserialize<'de> for ProcessedEvents<S, D>
         where
             S: Syntax,

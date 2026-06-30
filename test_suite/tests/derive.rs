@@ -24,7 +24,6 @@ fn basic() {
 #[test]
 fn byte_data() {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Syntax)]
-    #[syntax(data = [u8])]
     #[repr(u32)]
     pub enum SyntaxKind {
         A,
