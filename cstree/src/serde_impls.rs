@@ -55,7 +55,7 @@ macro_rules! gen_serialize {
 
                 Some(Event::EnterNode($l::into_raw(node.kind()), has_data))
             }
-            WalkEvent::Enter(NodeOrToken::Token(tok)) => Some(Event::Token($l::into_raw(tok.kind()), TokenPayload(Cow::Borrowed(tok.data())))),
+            WalkEvent::Enter(NodeOrToken::Token(tok)) => Some(Event::Token($l::into_raw(tok.kind()), TokenPayload(Cow::Borrowed(tok.data_bytes())))),
 
             WalkEvent::Leave(NodeOrToken::Node(_)) => Some(Event::LeaveNode),
             WalkEvent::Leave(NodeOrToken::Token(_)) => None,
@@ -241,7 +241,12 @@ where
                             builder.start_node(S::from_raw(kind));
                             data_indices.push_back(has_data);
                         }
-                        Event::Token(kind, data) => builder.token_from_bytes(S::from_raw(kind), data.0.as_ref()),
+                        Event::Token(kind, data) => {
+                            let kind = S::from_raw(kind);
+                            let data = S::data_from_bytes(data.0.as_ref())
+                                .ok_or_else(|| A::Error::custom("token payload does not match syntax data type"))?;
+                            builder.token(kind, data);
+                        }
                         Event::LeaveNode => builder.finish_node(),
                     }
                 }

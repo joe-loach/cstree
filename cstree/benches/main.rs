@@ -17,6 +17,8 @@ pub enum TestKind {
 }
 
 impl Syntax for TestKind {
+    type Data = str;
+
     fn from_raw(raw: RawSyntaxKind) -> Self {
         if raw.0 == u32::MAX - 1 {
             TestKind::Plus
@@ -32,9 +34,17 @@ impl Syntax for TestKind {
         }
     }
 
-    fn static_data(self) -> Option<&'static [u8]> {
+    fn data_to_bytes(data: &Self::Data) -> &[u8] {
+        data.as_bytes()
+    }
+
+    fn data_from_bytes(data: &[u8]) -> Option<&Self::Data> {
+        core::str::from_utf8(data).ok()
+    }
+
+    fn static_data(self) -> Option<&'static Self::Data> {
         match self {
-            TestKind::Plus => Some(b"+"),
+            TestKind::Plus => Some("+"),
             TestKind::Element { .. } => None,
         }
     }

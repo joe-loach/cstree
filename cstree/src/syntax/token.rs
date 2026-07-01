@@ -54,7 +54,7 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     pub fn write_debug(&self, target: &mut impl fmt::Write) -> fmt::Result {
         write!(target, "{:?}@{:?}", self.kind(), self.text_range())?;
         write!(target, " ")?;
-        fmt_data_debug(self.data(), target)
+        fmt_data_debug(self.data_bytes(), target)
     }
 
     /// Returns this token's [`Debug`](fmt::Debug) representation as a string.
@@ -71,7 +71,7 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     /// Writes this token's [`Display`](fmt::Display) representation into the given `target`.
     #[inline]
     pub fn write_display(&self, target: &mut impl fmt::Write) -> fmt::Result {
-        fmt_data_display(self.data(), target)
+        fmt_data_display(self.data_bytes(), target)
     }
 
     /// Returns this token's [`Display`](fmt::Display) representation as a string.
@@ -144,22 +144,34 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
         TextRange::at(self.offset, self.green().text_len())
     }
 
+    /// Returns the typed source data of this token.
+    #[inline]
+    pub fn data(&self) -> &S::Data {
+        S::data_from_bytes(self.green().data()).expect("green token data violated the syntax data invariant")
+    }
+
     /// Returns the source bytes of this token.
     #[inline]
-    pub fn data(&self) -> &[u8] {
-        self.green().data()
+    pub fn data_bytes(&self) -> &[u8] {
+        S::data_to_bytes(self.data())
     }
 
     /// Returns the source text of this token, if it is valid UTF-8.
     #[inline]
     pub fn text(&self) -> Option<&str> {
-        self.green().text()
+        core::str::from_utf8(self.data_bytes()).ok()
     }
 
     /// If the [syntax kind](Syntax) of this token always represents the same data, returns that data.
     #[inline(always)]
-    pub fn static_data(&self) -> Option<&'static [u8]> {
+    pub fn static_data(&self) -> Option<&'static S::Data> {
         S::static_data(self.kind())
+    }
+
+    /// If the [syntax kind](Syntax) of this token always represents the same data, returns its bytes.
+    #[inline(always)]
+    pub fn static_data_bytes(&self) -> Option<&'static [u8]> {
+        self.static_data().map(S::data_to_bytes)
     }
 
     /// If the [syntax kind](Syntax) of this token always represents the same text, returns
@@ -174,11 +186,11 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     /// # use cstree::build::*;
     /// let mut builder: GreenNodeBuilder<MySyntax> = GreenNodeBuilder::new();
     /// # builder.start_node(Root);
-    /// # builder.token(Identifier, "x");
-    /// # builder.token(Whitespace, " ");
-    /// # builder.token(Plus, "+");
-    /// # builder.token(Whitespace, " ");
-    /// # builder.token(Int, "3");
+    /// # builder.token(Identifier, b"x");
+    /// # builder.token(Whitespace, b" ");
+    /// # builder.token(Plus, b"+");
+    /// # builder.token(Whitespace, b" ");
+    /// # builder.token(Int, b"3");
     /// # builder.finish_node();
     /// let tree = parse(&mut builder, "x + 3");
     /// # let tree: SyntaxNode<MySyntax> = SyntaxNode::new_root(builder.finish());
@@ -206,14 +218,14 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     /// # use cstree::testing::*;
     /// let mut builder: GreenNodeBuilder<MySyntax> = GreenNodeBuilder::new();
     /// # builder.start_node(Root);
-    /// # builder.token(Identifier, "x");
-    /// # builder.token(Whitespace, " ");
-    /// # builder.token(Plus, "+");
-    /// # builder.token(Whitespace, " ");
-    /// # builder.token(Identifier, "x");
-    /// # builder.token(Whitespace, " ");
-    /// # builder.token(Plus, "+");
-    /// # builder.token(Int, "3");
+    /// # builder.token(Identifier, b"x");
+    /// # builder.token(Whitespace, b" ");
+    /// # builder.token(Plus, b"+");
+    /// # builder.token(Whitespace, b" ");
+    /// # builder.token(Identifier, b"x");
+    /// # builder.token(Whitespace, b" ");
+    /// # builder.token(Plus, b"+");
+    /// # builder.token(Int, b"3");
     /// # builder.finish_node();
     /// let tree = parse(&mut builder, "x + x + 3");
     /// # let tree: SyntaxNode<MySyntax> = SyntaxNode::new_root(builder.finish());
@@ -230,7 +242,7 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     /// ```
     #[inline]
     pub fn data_eq(&self, other: &Self) -> bool {
-        self.data() == other.data()
+        self.data_bytes() == other.data_bytes()
     }
 
     /// Returns `true` if `self` and `other` represent equal source text.

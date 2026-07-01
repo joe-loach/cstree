@@ -198,16 +198,32 @@ pub mod sync {
 ///
 /// [`SyntaxNode`]: crate::syntax::SyntaxNode
 pub trait Syntax: Sized + Copy + fmt::Debug + Eq {
+    /// The payload type stored in tokens for this syntax.
+    ///
+    /// Use `[u8]` for the byte-oriented default. Syntaxes whose tokens all have
+    /// the same fixed-width payload can use a sized type such as `[u8; 32]` and
+    /// validate that invariant in [`Syntax::data_from_bytes`].
+    type Data: ?Sized + 'static;
+
     /// Construct a semantic item kind from the compact representation.
     fn from_raw(raw: RawSyntaxKind) -> Self;
 
     /// Convert a semantic item kind into a more compact representation.
     fn into_raw(self) -> RawSyntaxKind;
 
-    /// Fixed bytes for a particular syntax kind.
+    /// Returns the canonical byte representation of token data.
+    fn data_to_bytes(data: &Self::Data) -> &[u8];
+
+    /// Reborrows canonical bytes as this syntax's token data type.
     ///
-    /// Implement for kinds that will only ever represent the same token bytes.
-    fn static_data(self) -> Option<&'static [u8]> {
+    /// Returning `None` rejects byte slices that do not satisfy the syntax's
+    /// token payload invariant.
+    fn data_from_bytes(data: &[u8]) -> Option<&Self::Data>;
+
+    /// Fixed token data for a particular syntax kind.
+    ///
+    /// Implement for kinds that will only ever represent the same token data.
+    fn static_data(self) -> Option<&'static Self::Data> {
         None
     }
 
@@ -219,7 +235,8 @@ pub trait Syntax: Sized + Copy + fmt::Debug + Eq {
     /// it faster to add them to a syntax tree and to look up their text. Since there can often be many occurrences
     /// of these tokens inside a file, doing so will improve the performance of using `cstree`.
     fn static_text(self) -> Option<&'static str> {
-        self.static_data().and_then(|data| core::str::from_utf8(data).ok())
+        self.static_data()
+            .and_then(|data| core::str::from_utf8(Self::data_to_bytes(data)).ok())
     }
 }
 
@@ -258,6 +275,8 @@ pub mod testing {
     pub use TestSyntaxKind::*;
 
     impl Syntax for TestSyntaxKind {
+        type Data = [u8];
+
         fn from_raw(raw: RawSyntaxKind) -> Self {
             assert!(raw.0 <= TestSyntaxKind::__LAST as u32);
             unsafe { core::mem::transmute::<u32, Self>(raw.0) }
@@ -267,7 +286,15 @@ pub mod testing {
             RawSyntaxKind(self as u32)
         }
 
-        fn static_data(self) -> Option<&'static [u8]> {
+        fn data_to_bytes(data: &Self::Data) -> &[u8] {
+            data
+        }
+
+        fn data_from_bytes(data: &[u8]) -> Option<&Self::Data> {
+            Some(data)
+        }
+
+        fn static_data(self) -> Option<&'static Self::Data> {
             match self {
                 TestSyntaxKind::Plus => Some(b"+"),
                 _ => None,

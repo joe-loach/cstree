@@ -24,6 +24,8 @@ pub enum Element<'s> {
 pub struct SyntaxKind(u32);
 
 impl Syntax for SyntaxKind {
+    type Data = str;
+
     fn from_raw(raw: RawSyntaxKind) -> Self {
         Self(raw.0)
     }
@@ -32,7 +34,15 @@ impl Syntax for SyntaxKind {
         RawSyntaxKind(self.0)
     }
 
-    fn static_data(self) -> Option<&'static [u8]> {
+    fn data_to_bytes(data: &Self::Data) -> &[u8] {
+        data.as_bytes()
+    }
+
+    fn data_from_bytes(data: &[u8]) -> Option<&Self::Data> {
+        core::str::from_utf8(data).ok()
+    }
+
+    fn static_data(self) -> Option<&'static Self::Data> {
         None
     }
 }

@@ -155,7 +155,7 @@ fn parse(text: &str) -> Parse {
         /// Advance one token, adding it to the current branch of the tree builder.
         fn bump(&mut self) {
             let (kind, text) = self.tokens.pop_front().unwrap();
-            self.builder.token(kind, text);
+            self.builder.token(kind, text.as_bytes());
         }
 
         /// Peek at the first unprocessed token

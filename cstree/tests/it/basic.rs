@@ -161,6 +161,8 @@ enum ByteKind {
 }
 
 impl Syntax for ByteKind {
+    type Data = [u8];
+
     fn from_raw(raw: RawSyntaxKind) -> Self {
         match raw.0 {
             0 => Self::Root,
@@ -174,7 +176,15 @@ impl Syntax for ByteKind {
         RawSyntaxKind(self as u32)
     }
 
-    fn static_data(self) -> Option<&'static [u8]> {
+    fn data_to_bytes(data: &Self::Data) -> &[u8] {
+        data
+    }
+
+    fn data_from_bytes(data: &[u8]) -> Option<&Self::Data> {
+        Some(data)
+    }
+
+    fn static_data(self) -> Option<&'static Self::Data> {
         match self {
             Self::Plus => Some(b"+"),
             _ => None,
@@ -197,8 +207,8 @@ fn byte_token_data() {
     let plus = first.next_token().unwrap();
     let second = plus.next_token().unwrap();
 
-    assert_eq!(first.data(), b"\xff\x00abc");
-    assert_eq!(plus.static_data(), Some(b"+".as_slice()));
+    assert_eq!(first.data_bytes(), b"\xff\x00abc");
+    assert_eq!(plus.static_data_bytes(), Some(b"+".as_slice()));
     assert_eq!(root.data().len(), 11.into());
     assert_eq!(first.text(), None);
     assert!(first.data_eq(second));
@@ -211,4 +221,68 @@ fn byte_token_data() {
         chunks,
         vec![b"\xff\x00abc".to_vec(), b"+".to_vec(), b"\xff\x00abc".to_vec()]
     );
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+enum FixedKind {
+    Root,
+    Bytes4,
+    Static4,
+}
+
+impl Syntax for FixedKind {
+    type Data = [u8; 4];
+
+    fn from_raw(raw: RawSyntaxKind) -> Self {
+        match raw.0 {
+            0 => Self::Root,
+            1 => Self::Bytes4,
+            2 => Self::Static4,
+            _ => panic!("invalid fixed kind"),
+        }
+    }
+
+    fn into_raw(self) -> RawSyntaxKind {
+        RawSyntaxKind(self as u32)
+    }
+
+    fn data_to_bytes(data: &Self::Data) -> &[u8] {
+        data
+    }
+
+    fn data_from_bytes(data: &[u8]) -> Option<&Self::Data> {
+        data.try_into().ok()
+    }
+
+    fn static_data(self) -> Option<&'static Self::Data> {
+        match self {
+            Self::Static4 => Some(b"stat"),
+            _ => None,
+        }
+    }
+}
+
+#[test]
+fn fixed_width_token_data() {
+    assert_eq!(core::mem::size_of::<[u8; 4]>(), 4);
+    assert!(FixedKind::data_from_bytes(b"abc").is_none());
+    assert_eq!(FixedKind::data_from_bytes(b"abcd"), Some(b"abcd"));
+
+    let mut builder = GreenNodeBuilder::<FixedKind>::new();
+    builder.start_node(FixedKind::Root);
+    builder.token(FixedKind::Bytes4, b"abcd");
+    builder.token_from_bytes(FixedKind::Bytes4, b"wxyz");
+    builder.static_token(FixedKind::Static4);
+    builder.finish_node();
+    let root = cstree::syntax::SyntaxNode::<FixedKind>::new_root(builder.finish());
+
+    let first = root.first_token().unwrap();
+    let second = first.next_token().unwrap();
+    let third = second.next_token().unwrap();
+
+    assert_eq!(first.data(), b"abcd");
+    assert_eq!(second.data(), b"wxyz");
+    assert_eq!(third.static_data(), Some(b"stat"));
+    assert_eq!(root.data().len(), 12.into());
 }

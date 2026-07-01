@@ -65,7 +65,7 @@ impl<'input, I: Iterator<Item = (SyntaxKind, &'input str)>> Parser<'input, I> {
 
     fn bump(&mut self) {
         if let Some((token, string)) = self.iter.next() {
-            self.builder.token(token, string);
+            self.builder.token(token, string.as_bytes());
         }
     }
 

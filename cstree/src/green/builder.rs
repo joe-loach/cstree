@@ -51,8 +51,8 @@ impl<S: Syntax> GreenNodeBuilder<S> {
         GreenNode::new_with_len_and_hash(kind, self.children.drain(offset..), text_len, child_hash)
     }
 
-    fn make_token(kind: S, data: &[u8]) -> GreenToken {
-        GreenToken::new(S::into_raw(kind), data)
+    fn make_token(kind: S, data: &S::Data) -> GreenToken {
+        GreenToken::new(S::into_raw(kind), S::data_to_bytes(data))
     }
 
     /// Add a new token with the given data to the current node.
@@ -60,12 +60,12 @@ impl<S: Syntax> GreenNodeBuilder<S> {
     /// ## Panics
     /// In debug mode, if `kind` has static data, this function verifies that `data` matches that data.
     #[inline]
-    pub fn token(&mut self, kind: S, data: impl AsRef<[u8]>) {
-        let data = data.as_ref();
+    pub fn token(&mut self, kind: S, data: &S::Data) {
         let token = match S::static_data(kind) {
             Some(static_data) => {
                 debug_assert_eq!(
-                    static_data, data,
+                    S::data_to_bytes(static_data),
+                    S::data_to_bytes(data),
                     "received `{kind:?}` token with data that does not match its static data"
                 );
                 Self::make_token(kind, static_data)
@@ -78,7 +78,9 @@ impl<S: Syntax> GreenNodeBuilder<S> {
     /// Add a new token from canonical bytes to the current node.
     #[inline]
     pub fn token_from_bytes(&mut self, kind: S, bytes: &[u8]) {
-        self.token(kind, bytes);
+        let data = S::data_from_bytes(bytes)
+            .unwrap_or_else(|| panic!("received bytes that are not valid token data for '{kind:?}'"));
+        self.token(kind, data);
     }
 
     /// Add a new token to the current node using its static data.

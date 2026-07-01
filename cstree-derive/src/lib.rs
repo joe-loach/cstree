@@ -68,6 +68,8 @@ fn expand_syntax(ast: DeriveInput) -> Result<TokenStream, Vec<syn::Error>> {
     let trait_impl = quote_spanned! { syntax_kind_enum.source.span()=>
         #[automatically_derived]
         impl ::cstree::Syntax for #name {
+            type Data = [u8];
+
             fn from_raw(raw: ::cstree::RawSyntaxKind) -> Self {
                 assert!(raw.0 < #variant_count, "Invalid raw syntax kind: {}", raw.0);
                 // Safety: discriminant is valid by the assert above
@@ -78,7 +80,15 @@ fn expand_syntax(ast: DeriveInput) -> Result<TokenStream, Vec<syn::Error>> {
                 ::cstree::RawSyntaxKind(self as u32)
             }
 
-            fn static_data(self) -> ::core::option::Option<&'static [u8]> {
+            fn data_to_bytes(data: &Self::Data) -> &[u8] {
+                data
+            }
+
+            fn data_from_bytes(data: &[u8]) -> ::core::option::Option<&Self::Data> {
+                ::core::option::Option::Some(data)
+            }
+
+            fn static_data(self) -> ::core::option::Option<&'static Self::Data> {
                 match self {
                     #( #static_data )*
                 }

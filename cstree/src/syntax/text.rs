@@ -62,7 +62,7 @@ impl<'n, S: Syntax, D> SyntaxData<'n, S, D> {
         self.tokens_with_ranges().try_fold(init, move |acc, (token, range)| {
             let start = u32::from(range.start()) as usize;
             let end = u32::from(range.end()) as usize;
-            f(acc, &token.data()[start..end])
+            f(acc, &token.data_bytes()[start..end])
         })
     }
 
@@ -107,7 +107,7 @@ impl<S: Syntax, D> fmt::Debug for SyntaxData<'_, S, D> {
             .entries(self.tokens_with_ranges().map(|(token, range)| {
                 let start = u32::from(range.start()) as usize;
                 let end = u32::from(range.end()) as usize;
-                &token.data()[start..end]
+                &token.data_bytes()[start..end]
             }))
             .finish()
     }
@@ -134,7 +134,7 @@ impl<'n, S: Syntax, D> SyntaxText<'n, S, D> {
             range: node.text_range(),
         };
         text.tokens_with_ranges()
-            .all(|(token, range)| core::str::from_utf8(&token.data()[byte_bounds(range)]).is_ok())
+            .all(|(token, range)| core::str::from_utf8(&token.data_bytes()[byte_bounds(range)]).is_ok())
             .then_some(text)
     }
 
@@ -202,7 +202,7 @@ impl<'n, S: Syntax, D> SyntaxText<'n, S, D> {
         F: FnMut(T, &str) -> Result<T, E>,
     {
         self.tokens_with_ranges().try_fold(init, move |acc, (token, range)| {
-            let chunk = core::str::from_utf8(&token.data()[byte_bounds(range)]).unwrap();
+            let chunk = core::str::from_utf8(&token.data_bytes()[byte_bounds(range)]).unwrap();
             f(acc, chunk)
         })
     }
@@ -335,8 +335,8 @@ where
         while y.1.is_empty() {
             y = ys.next()?;
         }
-        let x_text = core::str::from_utf8(&x.0.data()[byte_bounds(x.1)]).unwrap();
-        let y_text = core::str::from_utf8(&y.0.data()[byte_bounds(y.1)]).unwrap();
+        let x_text = core::str::from_utf8(&x.0.data_bytes()[byte_bounds(x.1)]).unwrap();
+        let y_text = core::str::from_utf8(&y.0.data_bytes()[byte_bounds(y.1)]).unwrap();
         if !(x_text.starts_with(y_text) || y_text.starts_with(x_text)) {
             return Some(());
         }

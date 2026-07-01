@@ -18,6 +18,8 @@ pub enum SyntaxKind {
 type Calculator = SyntaxKind;
 
 impl Syntax for Calculator {
+    type Data = str;
+
     fn from_raw(raw: RawSyntaxKind) -> Self {
         // This just needs to be the inverse of `into_raw`, but could also
         // be an `impl TryFrom<u32> for SyntaxKind` or any other conversion.
@@ -37,12 +39,20 @@ impl Syntax for Calculator {
         RawSyntaxKind(self as u32)
     }
 
-    fn static_data(self) -> Option<&'static [u8]> {
+    fn data_to_bytes(data: &Self::Data) -> &[u8] {
+        data.as_bytes()
+    }
+
+    fn data_from_bytes(data: &[u8]) -> Option<&Self::Data> {
+        core::str::from_utf8(data).ok()
+    }
+
+    fn static_data(self) -> Option<&'static Self::Data> {
         match self {
-            SyntaxKind::Plus => Some(b"+"),
-            SyntaxKind::Minus => Some(b"-"),
-            SyntaxKind::LParen => Some(b"("),
-            SyntaxKind::RParen => Some(b")"),
+            SyntaxKind::Plus => Some("+"),
+            SyntaxKind::Minus => Some("-"),
+            SyntaxKind::LParen => Some("("),
+            SyntaxKind::RParen => Some(")"),
             _ => None,
         }
     }
