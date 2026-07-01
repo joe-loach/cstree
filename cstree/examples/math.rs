@@ -49,7 +49,6 @@ type SyntaxNode = cstree::syntax::SyntaxNode<MySyntax>;
 type SyntaxToken = cstree::syntax::SyntaxToken<MySyntax>;
 #[allow(unused)]
 type SyntaxElement = cstree::util::NodeOrToken<SyntaxNode, SyntaxToken>;
-type SyntaxElementRef<'a> = cstree::util::NodeOrToken<&'a SyntaxNode, &'a SyntaxToken>;
 
 struct Parser<'input, I: Iterator<Item = (SyntaxKind, &'input str)>> {
     builder: GreenNodeBuilder<MySyntax>,
@@ -108,7 +107,7 @@ impl<'input, I: Iterator<Item = (SyntaxKind, &'input str)>> Parser<'input, I> {
     }
 }
 
-fn print(indent: usize, element: SyntaxElementRef<'_>) {
+fn print(indent: usize, element: SyntaxElement) {
     let kind = element.kind();
     print!("{:indent$}", "", indent = indent);
     match element {
@@ -146,5 +145,5 @@ fn main() {
         .peekable(),
     }
     .parse();
-    print(0, (&ast).into());
+    print(0, ast.into());
 }

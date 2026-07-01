@@ -1,6 +1,6 @@
 use std::{io::Write, iter::Peekable};
 
-use cstree::{prelude::*, syntax::SyntaxElementRef};
+use cstree::{prelude::*, syntax::SyntaxElement};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -242,7 +242,7 @@ fn main() {
         let root = SyntaxNode::<Calculator>::new_root(tree);
 
         if let Some(expr) = root.first_child_or_token() {
-            let result = eval_elem(expr, &mut root.children_with_tokens());
+            let result = eval_elem(expr.cloned(), &mut root.children_with_tokens());
             println!("Result: {result}");
         }
     }
@@ -264,16 +264,13 @@ fn eval(expr: &SyntaxNode<Calculator>) -> i64 {
     }
 }
 
-fn eval_elem<'e>(
-    expr: SyntaxElementRef<'_, Calculator>,
-    children: &mut impl Iterator<Item = SyntaxElementRef<'e, Calculator>>,
-) -> i64 {
+fn eval_elem(expr: SyntaxElement<Calculator>, children: &mut impl Iterator<Item = SyntaxElement<Calculator>>) -> i64 {
     use cstree::util::NodeOrToken;
 
     match expr {
         NodeOrToken::Node(n) => {
             assert_eq!(n.kind(), SyntaxKind::Expr);
-            eval(n)
+            eval(&n)
         }
         NodeOrToken::Token(t) => match t.kind() {
             SyntaxKind::Int => {

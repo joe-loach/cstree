@@ -538,13 +538,13 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     ///
     /// If you want to also consider leafs, see [`children_with_tokens`](SyntaxNode::children_with_tokens).
     #[inline]
-    pub fn children(&self) -> SyntaxNodeChildren<'_, S, D> {
+    pub fn children(&self) -> SyntaxNodeChildren<S, D> {
         SyntaxNodeChildren::new(self)
     }
 
     /// Returns an iterator over child elements of this node, including tokens.
     #[inline]
-    pub fn children_with_tokens(&self) -> SyntaxElementChildren<'_, S, D> {
+    pub fn children_with_tokens(&self) -> SyntaxElementChildren<S, D> {
         SyntaxElementChildren::new(self)
     }
 
@@ -697,10 +697,10 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     ///
     /// If you want to also consider leafs, see [`siblings_with_tokens`](SyntaxNode::siblings_with_tokens).
     #[inline]
-    pub fn siblings(&self, direction: Direction) -> impl Iterator<Item = &SyntaxNode<S, D>> {
-        iter::successors(Some(self), move |node| match direction {
-            Direction::Next => node.next_sibling(),
-            Direction::Prev => node.prev_sibling(),
+    pub fn siblings(&self, direction: Direction) -> impl Iterator<Item = SyntaxNode<S, D>> + use<S, D> {
+        iter::successors(Some(self.clone()), move |node| match direction {
+            Direction::Next => node.next_sibling().cloned(),
+            Direction::Prev => node.prev_sibling().cloned(),
         })
     }
 
@@ -708,11 +708,11 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// node's parent's children from this node on to the left or the right.
     /// The first item in the iterator will always be this node.
     #[inline]
-    pub fn siblings_with_tokens(&self, direction: Direction) -> impl Iterator<Item = SyntaxElementRef<'_, S, D>> {
-        let me: SyntaxElementRef<'_, S, D> = self.into();
+    pub fn siblings_with_tokens(&self, direction: Direction) -> impl Iterator<Item = SyntaxElement<S, D>> + use<S, D> {
+        let me: SyntaxElement<S, D> = self.clone().into();
         iter::successors(Some(me), move |el| match direction {
-            Direction::Next => el.next_sibling_or_token(),
-            Direction::Prev => el.prev_sibling_or_token(),
+            Direction::Next => el.next_sibling_or_token().map(|it| it.cloned()),
+            Direction::Prev => el.prev_sibling_or_token().map(|it| it.cloned()),
         })
     }
 
@@ -720,7 +720,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     ///
     /// If you want to also consider leafs, see [`descendants_with_tokens`](SyntaxNode::descendants_with_tokens).
     #[inline]
-    pub fn descendants(&self) -> impl Iterator<Item = &SyntaxNode<S, D>> {
+    pub fn descendants(&self) -> impl Iterator<Item = SyntaxNode<S, D>> + use<S, D> {
         self.preorder().filter_map(|event| match event {
             WalkEvent::Enter(node) => Some(node),
             WalkEvent::Leave(_) => None,
@@ -729,7 +729,7 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
 
     /// Returns an iterator over all elements in the subtree starting at this node, including this node.
     #[inline]
-    pub fn descendants_with_tokens(&self) -> impl Iterator<Item = SyntaxElementRef<'_, S, D>> {
+    pub fn descendants_with_tokens(&self) -> impl Iterator<Item = SyntaxElement<S, D>> + use<S, D> {
         self.preorder_with_tokens().filter_map(|event| match event {
             WalkEvent::Enter(it) => Some(it),
             WalkEvent::Leave(_) => None,
@@ -739,20 +739,21 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// Traverse the subtree rooted at the current node (including the current
     /// node) in preorder, excluding tokens.
     #[inline(always)]
-    pub fn preorder(&self) -> impl Iterator<Item = WalkEvent<&SyntaxNode<S, D>>> {
-        iter::successors(Some(WalkEvent::Enter(self)), move |pos| {
+    pub fn preorder(&self) -> impl Iterator<Item = WalkEvent<SyntaxNode<S, D>>> + use<S, D> {
+        let root = self.clone();
+        iter::successors(Some(WalkEvent::Enter(root.clone())), move |pos| {
             let next = match pos {
                 WalkEvent::Enter(node) => match node.first_child() {
-                    Some(child) => WalkEvent::Enter(child),
-                    None => WalkEvent::Leave(*node),
+                    Some(child) => WalkEvent::Enter(child.clone()),
+                    None => WalkEvent::Leave(node.clone()),
                 },
                 WalkEvent::Leave(node) => {
-                    if node == &self {
+                    if node == &root {
                         return None;
                     }
                     match node.next_sibling() {
-                        Some(sibling) => WalkEvent::Enter(sibling),
-                        None => WalkEvent::Leave(node.parent().unwrap()),
+                        Some(sibling) => WalkEvent::Enter(sibling.clone()),
+                        None => WalkEvent::Leave(node.parent().unwrap().clone()),
                     }
                 }
             };
@@ -763,24 +764,24 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
     /// Traverse the subtree rooted at the current node (including the current
     /// node) in preorder, including tokens.
     #[inline(always)]
-    pub fn preorder_with_tokens(&self) -> impl Iterator<Item = WalkEvent<SyntaxElementRef<'_, S, D>>> {
-        let me = self.into();
-        iter::successors(Some(WalkEvent::Enter(me)), move |pos| {
+    pub fn preorder_with_tokens(&self) -> impl Iterator<Item = WalkEvent<SyntaxElement<S, D>>> + use<S, D> {
+        let me: SyntaxElement<S, D> = self.clone().into();
+        iter::successors(Some(WalkEvent::Enter(me.clone())), move |pos| {
             let next = match pos {
                 WalkEvent::Enter(el) => match el {
                     NodeOrToken::Node(node) => match node.first_child_or_token() {
-                        Some(child) => WalkEvent::Enter(child),
-                        None => WalkEvent::Leave((*node).into()),
+                        Some(child) => WalkEvent::Enter(child.cloned()),
+                        None => WalkEvent::Leave(node.clone().into()),
                     },
-                    NodeOrToken::Token(token) => WalkEvent::Leave((*token).into()),
+                    NodeOrToken::Token(token) => WalkEvent::Leave(token.clone().into()),
                 },
                 WalkEvent::Leave(el) => {
                     if el == &me {
                         return None;
                     }
                     match el.next_sibling_or_token() {
-                        Some(sibling) => WalkEvent::Enter(sibling),
-                        None => WalkEvent::Leave(el.parent().unwrap().into()),
+                        Some(sibling) => WalkEvent::Enter(sibling.cloned()),
+                        None => WalkEvent::Leave(el.parent().unwrap().clone().into()),
                     }
                 }
             };
@@ -837,15 +838,15 @@ impl<S: Syntax, D> SyntaxNode<S, D> {
             );
             res = match &res {
                 NodeOrToken::Token(_) => return res,
-                NodeOrToken::Node(node) => {
-                    match node
-                        .children_with_tokens()
-                        .find(|child| child.text_range().contains_range(range))
-                    {
-                        Some(child) => child,
-                        None => return res,
-                    }
-                }
+                NodeOrToken::Node(node) => match node.green().children_from(0, node.text_range().start()).find_map(
+                    |(element, (index, offset))| {
+                        let child = node.get_or_add_element(element, index, offset);
+                        child.text_range().contains_range(range).then_some(child)
+                    },
+                ) {
+                    Some(child) => child,
+                    None => return res,
+                },
             };
         }
     }

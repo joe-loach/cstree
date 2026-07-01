@@ -229,6 +229,15 @@ impl<S: Syntax, D> SyntaxElement<S, D> {
             NodeOrToken::Token(it) => it.prev_sibling_or_token(),
         }
     }
+
+    #[inline]
+    pub(super) fn token_at_offset(&self, offset: TextSize) -> TokenAtOffset<SyntaxToken<S, D>> {
+        assert!(self.text_range().start() <= offset && offset <= self.text_range().end());
+        match self {
+            NodeOrToken::Token(token) => TokenAtOffset::Single(token.clone()),
+            NodeOrToken::Node(node) => node.token_at_offset(offset),
+        }
+    }
 }
 
 impl<'a, S: Syntax, D> SyntaxElementRef<'a, S, D> {
@@ -310,15 +319,6 @@ impl<'a, S: Syntax, D> SyntaxElementRef<'a, S, D> {
         match self {
             NodeOrToken::Node(it) => it.prev_sibling_or_token(),
             NodeOrToken::Token(it) => it.prev_sibling_or_token(),
-        }
-    }
-
-    #[inline]
-    pub(super) fn token_at_offset(&self, offset: TextSize) -> TokenAtOffset<SyntaxToken<S, D>> {
-        assert!(self.text_range().start() <= offset && offset <= self.text_range().end());
-        match self {
-            NodeOrToken::Token(token) => TokenAtOffset::Single((*token).clone()),
-            NodeOrToken::Node(node) => node.token_at_offset(offset),
         }
     }
 }

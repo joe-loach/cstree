@@ -1,5 +1,8 @@
 //! Red tree iterators.
 
+extern crate alloc;
+
+use alloc::{vec, vec::Vec};
 use core::iter::FusedIterator;
 
 use text_size::TextSize;
@@ -7,7 +10,7 @@ use text_size::TextSize;
 use crate::{
     Syntax,
     green::{GreenElementRef, GreenNodeChildren},
-    syntax::{SyntaxElementRef, SyntaxNode},
+    syntax::{SyntaxElement, SyntaxNode},
 };
 
 #[derive(Clone, Debug)]
@@ -67,41 +70,39 @@ impl FusedIterator for Iter<'_> {}
 
 /// An iterator over the child nodes of a [`SyntaxNode`].
 #[derive(Debug)]
-pub struct SyntaxNodeChildren<'n, S: Syntax, D: 'static = ()> {
-    inner: Iter<'n>,
-    parent: &'n SyntaxNode<S, D>,
+pub struct SyntaxNodeChildren<S: Syntax, D: 'static = ()> {
+    inner: vec::IntoIter<SyntaxNode<S, D>>,
 }
 
-impl<S: Syntax, D> Clone for SyntaxNodeChildren<'_, S, D> {
+impl<S: Syntax, D> Clone for SyntaxNodeChildren<S, D> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
-            parent: self.parent,
         }
     }
 }
 
-impl<'n, S: Syntax, D> SyntaxNodeChildren<'n, S, D> {
+impl<S: Syntax, D> SyntaxNodeChildren<S, D> {
     #[inline]
-    pub(super) fn new(parent: &'n SyntaxNode<S, D>) -> Self {
+    pub(super) fn new(parent: &SyntaxNode<S, D>) -> Self {
+        let mut children = Vec::with_capacity(parent.arity());
+        for (element, index, offset) in Iter::new(parent) {
+            if let Some(&node) = element.as_node() {
+                children.push((*parent.get_or_add_node(node, index, offset).as_node().unwrap()).clone());
+            }
+        }
         Self {
-            inner: Iter::new(parent),
-            parent,
+            inner: children.into_iter(),
         }
     }
 }
 
-impl<'n, S: Syntax, D> Iterator for SyntaxNodeChildren<'n, S, D> {
-    type Item = &'n SyntaxNode<S, D>;
+impl<S: Syntax, D> Iterator for SyntaxNodeChildren<S, D> {
+    type Item = SyntaxNode<S, D>;
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
-        for (element, index, offset) in &mut self.inner {
-            if let Some(&node) = element.as_node() {
-                return Some(self.parent.get_or_add_node(node, index, offset).as_node().unwrap());
-            }
-        }
-        None
+        self.inner.next()
     }
 
     #[inline(always)]
@@ -118,49 +119,46 @@ impl<'n, S: Syntax, D> Iterator for SyntaxNodeChildren<'n, S, D> {
     }
 }
 
-impl<S: Syntax, D> ExactSizeIterator for SyntaxNodeChildren<'_, S, D> {
+impl<S: Syntax, D> ExactSizeIterator for SyntaxNodeChildren<S, D> {
     #[inline(always)]
     fn len(&self) -> usize {
         self.inner.len()
     }
 }
-impl<S: Syntax, D> FusedIterator for SyntaxNodeChildren<'_, S, D> {}
+impl<S: Syntax, D> FusedIterator for SyntaxNodeChildren<S, D> {}
 
 /// An iterator over the children of a [`SyntaxNode`].
 #[derive(Debug)]
-pub struct SyntaxElementChildren<'n, S: Syntax, D: 'static = ()> {
-    inner: Iter<'n>,
-    parent: &'n SyntaxNode<S, D>,
+pub struct SyntaxElementChildren<S: Syntax, D: 'static = ()> {
+    inner: vec::IntoIter<SyntaxElement<S, D>>,
 }
 
-impl<S: Syntax, D> Clone for SyntaxElementChildren<'_, S, D> {
+impl<S: Syntax, D> Clone for SyntaxElementChildren<S, D> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
-            parent: self.parent,
         }
     }
 }
 
-impl<'n, S: Syntax, D> SyntaxElementChildren<'n, S, D> {
+impl<S: Syntax, D> SyntaxElementChildren<S, D> {
     #[inline]
-    pub(super) fn new(parent: &'n SyntaxNode<S, D>) -> Self {
+    pub(super) fn new(parent: &SyntaxNode<S, D>) -> Self {
+        let children = Iter::new(parent)
+            .map(|(green, index, offset)| parent.get_or_add_element(green, index, offset).cloned())
+            .collect::<Vec<_>>();
         Self {
-            inner: Iter::new(parent),
-            parent,
+            inner: children.into_iter(),
         }
     }
 }
 
-impl<'n, S: Syntax, D> Iterator for SyntaxElementChildren<'n, S, D> {
-    type Item = SyntaxElementRef<'n, S, D>;
+impl<S: Syntax, D> Iterator for SyntaxElementChildren<S, D> {
+    type Item = SyntaxElement<S, D>;
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
-        let parent = self.parent;
-        self.inner
-            .next()
-            .map(|(green, index, offset)| parent.get_or_add_element(green, index, offset))
+        self.inner.next()
     }
 
     #[inline(always)]
@@ -177,13 +175,13 @@ impl<'n, S: Syntax, D> Iterator for SyntaxElementChildren<'n, S, D> {
     }
 }
 
-impl<S: Syntax, D> ExactSizeIterator for SyntaxElementChildren<'_, S, D> {
+impl<S: Syntax, D> ExactSizeIterator for SyntaxElementChildren<S, D> {
     #[inline(always)]
     fn len(&self) -> usize {
         self.inner.len()
     }
 }
-impl<S: Syntax, D> FusedIterator for SyntaxElementChildren<'_, S, D> {}
+impl<S: Syntax, D> FusedIterator for SyntaxElementChildren<S, D> {}
 
 #[cfg(test)]
 #[allow(dead_code)]

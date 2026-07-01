@@ -293,11 +293,11 @@ impl<S: Syntax, D> SyntaxToken<S, D> {
     /// token's parent's children from this token on to the left or the right.
     /// The first item in the iterator will always be this token.
     #[inline]
-    pub fn siblings_with_tokens(&self, direction: Direction) -> impl Iterator<Item = SyntaxElementRef<'_, S, D>> {
-        let me: SyntaxElementRef<'_, S, D> = self.into();
+    pub fn siblings_with_tokens(&self, direction: Direction) -> impl Iterator<Item = SyntaxElement<S, D>> + use<S, D> {
+        let me: SyntaxElement<S, D> = self.clone().into();
         iter::successors(Some(me), move |el| match direction {
-            Direction::Next => el.next_sibling_or_token(),
-            Direction::Prev => el.prev_sibling_or_token(),
+            Direction::Next => el.next_sibling_or_token().map(|it| it.cloned()),
+            Direction::Prev => el.prev_sibling_or_token().map(|it| it.cloned()),
         })
     }
 

@@ -288,8 +288,8 @@ impl SExpr {
 
 // Let's enhance AST nodes with ancillary functions and eval.
 impl ast::Root {
-    fn sexps(&self) -> impl Iterator<Item = SExpr> + '_ {
-        self.0.children().cloned().filter_map(SExpr::cast)
+    fn sexps(&self) -> impl Iterator<Item = SExpr> {
+        self.0.children().filter_map(SExpr::cast)
     }
 }
 
@@ -329,8 +329,8 @@ impl ast::Atom {
 }
 
 impl ast::List {
-    fn sexps(&self) -> impl Iterator<Item = SExpr> + '_ {
-        self.0.children().cloned().filter_map(SExpr::cast)
+    fn sexps(&self) -> impl Iterator<Item = SExpr> {
+        self.0.children().filter_map(SExpr::cast)
     }
 
     fn eval(&self) -> Option<i64> {

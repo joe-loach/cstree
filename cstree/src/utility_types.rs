@@ -47,7 +47,7 @@ impl<N, T> NodeOrToken<N, T> {
 }
 
 impl<N: Clone, T: Clone> NodeOrToken<&N, &T> {
-    pub(crate) fn cloned(&self) -> NodeOrToken<N, T> {
+    pub fn cloned(&self) -> NodeOrToken<N, T> {
         match *self {
             NodeOrToken::Node(node) => NodeOrToken::Node(node.clone()),
             NodeOrToken::Token(token) => NodeOrToken::Token(token.clone()),

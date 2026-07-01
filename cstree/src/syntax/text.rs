@@ -88,7 +88,7 @@ impl<'n, S: Syntax, D> SyntaxData<'n, S, D> {
         self.fold_chunks((), |(), chunk| f(chunk))
     }
 
-    fn tokens_with_ranges(&self) -> impl Iterator<Item = (&'n SyntaxToken<S, D>, TextRange)> + use<'n, S, D> {
+    fn tokens_with_ranges(&self) -> impl Iterator<Item = (SyntaxToken<S, D>, TextRange)> + use<'n, S, D> {
         let text_range = self.range;
         self.node
             .descendants_with_tokens()
@@ -107,7 +107,7 @@ impl<S: Syntax, D> fmt::Debug for SyntaxData<'_, S, D> {
             .entries(self.tokens_with_ranges().map(|(token, range)| {
                 let start = u32::from(range.start()) as usize;
                 let end = u32::from(range.end()) as usize;
-                &token.data_bytes()[start..end]
+                token.data_bytes()[start..end].to_vec()
             }))
             .finish()
     }
@@ -229,7 +229,7 @@ impl<'n, S: Syntax, D> SyntaxText<'n, S, D> {
         self.fold_chunks((), |(), chunk| f(chunk))
     }
 
-    fn tokens_with_ranges(&self) -> impl Iterator<Item = (&'n SyntaxToken<S, D>, TextRange)> + use<'n, S, D> {
+    fn tokens_with_ranges(&self) -> impl Iterator<Item = (SyntaxToken<S, D>, TextRange)> + use<'n, S, D> {
         let text_range = self.range;
         self.node
             .descendants_with_tokens()
@@ -319,8 +319,8 @@ where
 
 fn zip_texts<'it1, 'it2, It1, It2, S1, S2, D1, D2>(xs: &mut It1, ys: &mut It2) -> Option<()>
 where
-    It1: Iterator<Item = (&'it1 SyntaxToken<S1, D1>, TextRange)>,
-    It2: Iterator<Item = (&'it2 SyntaxToken<S2, D2>, TextRange)>,
+    It1: Iterator<Item = (SyntaxToken<S1, D1>, TextRange)>,
+    It2: Iterator<Item = (SyntaxToken<S2, D2>, TextRange)>,
     D1: 'static,
     D2: 'static,
     S1: Syntax + 'it1,

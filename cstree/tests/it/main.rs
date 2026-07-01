@@ -81,7 +81,7 @@ pub fn assert_tree_eq(left: &SyntaxNode, right: &SyntaxNode) {
 
     for elem in left.children_with_tokens().zip(right.children_with_tokens()) {
         match elem {
-            (NodeOrToken::Node(ln), NodeOrToken::Node(rn)) => assert_tree_eq(ln, rn),
+            (NodeOrToken::Node(ln), NodeOrToken::Node(rn)) => assert_tree_eq(&ln, &rn),
             (NodeOrToken::Node(n), NodeOrToken::Token(t)) => {
                 panic!("{} != {}", n.debug(true), t.debug())
             }

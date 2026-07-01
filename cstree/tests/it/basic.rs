@@ -67,12 +67,12 @@ fn token_text_eq() {
     let leaf2_2 = tree.children().nth(2).unwrap().children_with_tokens().nth(2).unwrap();
     let leaf2_2 = leaf2_2.into_token().unwrap();
 
-    assert!(leaf0_0.text_eq(leaf2_0));
-    assert!(leaf0_1.text_eq(leaf2_1));
-    assert!(leaf1_0.text_eq(leaf2_2));
-    assert!(!leaf0_0.text_eq(leaf0_1));
-    assert!(!leaf2_1.text_eq(leaf2_2));
-    assert!(!leaf1_0.text_eq(leaf2_0));
+    assert!(leaf0_0.text_eq(&leaf2_0));
+    assert!(leaf0_1.text_eq(&leaf2_1));
+    assert!(leaf1_0.text_eq(&leaf2_2));
+    assert!(!leaf0_0.text_eq(&leaf0_1));
+    assert!(!leaf2_1.text_eq(&leaf2_2));
+    assert!(!leaf1_0.text_eq(&leaf2_0));
 }
 
 #[test]
